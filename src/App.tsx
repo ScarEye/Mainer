@@ -6,12 +6,13 @@ import { AudioEngine } from './audio/engine'
 import { MicDetector } from './audio/micDetector'
 import { encodeWav } from './audio/wav'
 import { ChartEditor } from './components/ChartEditor'
-import { NoteHighway } from './components/NoteHighway'
+import { PracticeVisual } from './components/PracticeVisual'
 import { StemMixer } from './components/StemMixer'
 import { UploadDropzone } from './components/UploadDropzone'
+import { VisualModePicker } from './components/VisualModePicker'
 import { WaveformScrub } from './components/WaveformScrub'
 import { YoutubeImport } from './components/YoutubeImport'
-import type { ChartNote, DrumChart, DrumLane, StemId, StemLevels } from './types/chart'
+import type { ChartNote, DrumChart, DrumLane, StemId, StemLevels, VisualMode } from './types/chart'
 import { STEM_IDS, defaultStemLevels } from './types/chart'
 import './App.css'
 
@@ -55,6 +56,15 @@ export default function App() {
   const [stemsReady, setStemsReady] = useState(false)
   const [splitting, setSplitting] = useState(false)
   const [splitMessage, setSplitMessage] = useState<string | null>(null)
+  const [visualMode, setVisualMode] = useState<VisualMode>(() => {
+    const saved = localStorage.getItem('mainer.visualMode')
+    return saved === 'notation' || saved === 'kit' || saved === 'digital' ? saved : 'digital'
+  })
+
+  const changeVisualMode = (mode: VisualMode) => {
+    setVisualMode(mode)
+    localStorage.setItem('mainer.visualMode', mode)
+  }
 
   useEffect(() => {
     const engine = engineRef.current
@@ -337,14 +347,28 @@ export default function App() {
         <main className="studio">
           <section className="studio__stage">
             <div className="track-meta">
-              <h1>{chart.title}</h1>
-              <p>
-                ~{chart.bpm} BPM · {chart.notes.length} notes · 6 drum lanes · {formatTime(duration)}
-                {stemsReady ? ' · stems ready' : ''}
-              </p>
+              <div className="track-meta__row">
+                <div>
+                  <h1>{chart.title}</h1>
+                  <p>
+                    ~{chart.bpm} BPM · {chart.notes.length} notes · 6 drum lanes · {formatTime(duration)}
+                    {stemsReady ? ' · stems ready' : ''}
+                  </p>
+                </div>
+                <VisualModePicker mode={visualMode} onChange={changeVisualMode} />
+              </div>
             </div>
-            <NoteHighway notes={chart.notes} currentTime={currentTime} hitFlash={hitFlash} />
-            <WaveformScrub
+            <PracticeVisual
+              mode={visualMode}
+              notes={chart.notes}
+              currentTime={currentTime}
+              hitFlash={hitFlash}
+            />
+            <p className="tip tip--visual">
+              {visualMode === 'digital' && 'Digital: notes fall down lanes to the HIT line.'}
+              {visualMode === 'notation' && 'Notation: drum staff — notes approach the NOW playhead from the right.'}
+              {visualMode === 'kit' && 'Kit: watch which drum lights up, then hit that piece.'}
+            </p>            <WaveformScrub
               buffer={buffer}
               currentTime={currentTime}
               duration={duration}
@@ -404,10 +428,6 @@ export default function App() {
               </span>
             </div>
             {error && <p className="status status--error">{error}</p>}
-            <p className="tip">
-              Split stems to mute guitar/vocals and hear drums only. Chart lanes: kick, snare, tom, hat, crash,
-              ride.
-            </p>
           </section>
 
           <aside className="studio__side">

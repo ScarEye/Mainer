@@ -1,21 +1,12 @@
 import { useEffect, useRef } from 'react'
 import type { ChartNote, DrumLane } from '../types/chart'
-import { LANES, LANE_SHORT } from '../types/chart'
+import { LANE_SHORT, LANE_COLORS, LANES } from '../types/chart'
 
 type Props = {
   notes: ChartNote[]
   currentTime: number
   hitFlash: Partial<Record<DrumLane, number>>
   lookAheadSec?: number
-}
-
-const LANE_COLORS: Record<DrumLane, string> = {
-  kick: '#f0713a',
-  snare: '#e8c547',
-  tom: '#d9896b',
-  hat: '#5ec8c0',
-  crash: '#c9a0ff',
-  ride: '#7eb6ff',
 }
 
 export function NoteHighway({ notes, currentTime, hitFlash, lookAheadSec = 2.4 }: Props) {

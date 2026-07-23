@@ -34,6 +34,24 @@ export const LANE_SHORT: Record<DrumLane, string> = {
   ride: 'RIDE',
 }
 
+export const LANE_COLORS: Record<DrumLane, string> = {
+  kick: '#f0713a',
+  snare: '#e8c547',
+  tom: '#d9896b',
+  hat: '#5ec8c0',
+  crash: '#c9a0ff',
+  ride: '#7eb6ff',
+}
+
+/** Practice stage visual style. */
+export type VisualMode = 'digital' | 'notation' | 'kit'
+
+export const VISUAL_MODES: { id: VisualMode; label: string }[] = [
+  { id: 'digital', label: 'Digital' },
+  { id: 'notation', label: 'Notation' },
+  { id: 'kit', label: 'Kit' },
+]
+
 export function createNoteId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
