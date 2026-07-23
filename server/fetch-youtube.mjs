@@ -4,6 +4,9 @@ import { mkdtemp, readFile, rm, writeFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const PORT = Number(process.env.MAINER_API_PORT || 8787)
 const MAX_DURATION_SEC = 12 * 60
@@ -197,28 +200,56 @@ async function findStemFiles(rootDir) {
   return found
 }
 
-function runDemucs(inputPath, outDir, onLog) {
+/** @type {null | { device: string, cuda: boolean, gpuName?: string, vramMb: number, segment: number, overlap: number, shifts: number }} */
+let demucsConfigCache = null
+
+async function getDemucsConfig() {
+  if (demucsConfigCache) return demucsConfigCache
+  try {
+    const { stdout } = await run('python', [path.join(__dirname, 'demucs_device.py')])
+    demucsConfigCache = JSON.parse(stdout.trim())
+    return demucsConfigCache
+  } catch {
+    demucsConfigCache = {
+      device: 'cpu',
+      cuda: false,
+      vramMb: 0,
+      segment: 10,
+      overlap: 0.1,
+      shifts: 0,
+    }
+    return demucsConfigCache
+  }
+}
+
+function runDemucs(inputPath, outDir, config, onLog) {
+  const args = [
+    '-m',
+    'demucs',
+    '-n',
+    'htdemucs',
+    '-d',
+    config.device,
+    '--shifts',
+    String(config.shifts),
+    '--overlap',
+    String(config.overlap),
+    '--segment',
+    String(config.segment),
+    '--out',
+    outDir,
+    inputPath,
+  ]
+
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      'python',
-      [
-        '-m',
-        'demucs',
-        '-n',
-        'htdemucs',
-        '-d',
-        'cpu',
-        '--shifts',
-        '0',
-        '--out',
-        outDir,
-        inputPath,
-      ],
-      {
-        windowsHide: true,
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    const child = spawn('python', args, {
+      windowsHide: true,
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        CUDA_VISIBLE_DEVICES: process.env.CUDA_VISIBLE_DEVICES ?? '0',
       },
-    )
+    })
 
     let stderr = ''
     const handleChunk = (d) => {
@@ -242,7 +273,6 @@ function runDemucs(inputPath, outDir, onLog) {
 
 /**
  * Start separation in the background and return a job id immediately.
- * Demucs on CPU often takes 2–10+ minutes (first run also downloads the model).
  */
 function startSeparateJob(wavBuffer) {
   const jobId = randomUUID()
@@ -250,7 +280,7 @@ function startSeparateJob(wavBuffer) {
   const job = {
     created: Date.now(),
     status: 'queued',
-    message: 'Queued — Demucs on CPU can take several minutes…',
+    message: 'Queued for stem separation…',
   }
   stemJobs.set(jobId, job)
 
@@ -261,16 +291,22 @@ function startSeparateJob(wavBuffer) {
     try {
       if (!(await demucsAvailable())) {
         throw new Error(
-          'Demucs is not installed. Run: python -m pip install torch demucs  (CPU torch is fine)',
+          'Demucs is not installed. Run: pip install demucs torch (CUDA torch for GPU).',
         )
       }
+
+      const config = await getDemucsConfig()
+      const deviceLabel = config.cuda
+        ? `GPU (${config.gpuName || 'CUDA'})`
+        : 'CPU'
 
       job.status = 'running'
       job.message = 'Saving audio for Demucs…'
       await writeFile(inputPath, wavBuffer)
 
-      job.message = 'Running Demucs (CPU). First run downloads the model — please wait…'
-      await runDemucs(inputPath, outDir, (line) => {
+      job.message = `Running Demucs on ${deviceLabel}…`
+      console.log(`[demucs ${jobId.slice(0, 8)}] device=${config.device} segment=${config.segment}`)
+      await runDemucs(inputPath, outDir, config, (line) => {
         // Keep messages short for the UI
         const clipped = line.length > 140 ? `${line.slice(0, 140)}…` : line
         job.message = clipped
@@ -329,7 +365,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const yt = await resolveYtDlp()
       const demucs = await demucsAvailable()
-      sendJson(res, 200, { ok: true, ytDlp: yt.join(' '), demucs })
+      const demucsConfig = demucs ? await getDemucsConfig() : null
+      sendJson(res, 200, {
+        ok: true,
+        ytDlp: yt.join(' '),
+        demucs,
+        demucsDevice: demucsConfig?.device,
+        gpuName: demucsConfig?.gpuName,
+      })
     } catch (e) {
       sendJson(res, 500, {
         ok: false,
@@ -341,9 +384,13 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/separate/health') {
     const demucs = await demucsAvailable()
+    const config = demucs ? await getDemucsConfig() : null
     sendJson(res, demucs ? 200 : 503, {
       ok: demucs,
       demucs,
+      device: config?.device,
+      gpuName: config?.gpuName,
+      vramMb: config?.vramMb,
       error: demucs ? undefined : 'Demucs not installed yet',
     })
     return

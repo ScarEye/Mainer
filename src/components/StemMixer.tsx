@@ -39,8 +39,7 @@ export function StemMixer({
 
       {!ready && (
         <p className="mixer__hint">
-          Split into Drums / Bass / Vocals / Other (guitar &amp; keys). CPU split often takes several minutes —
-          first run also downloads the Demucs model.
+          Split into Drums / Bass / Vocals / Other. Uses your GPU when available (much faster than CPU).
         </p>
       )}
 
