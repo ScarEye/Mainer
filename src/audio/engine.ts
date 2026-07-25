@@ -75,7 +75,6 @@ export class AudioEngine {
   get currentTime(): number {
     if (!this.ctx || !this.playing) return this.offset
     const t = this.offset + (this.ctx.currentTime - this.startedAt) * this.rate
-    if (this.loop && t >= this.loop.end) return this.loop.start
     return Math.min(t, this.duration)
   }
 
@@ -136,11 +135,11 @@ export class AudioEngine {
   private tick = () => {
     if (!this.playing || !this.ctx) return
 
-    let t = this.offset + (this.ctx.currentTime - this.startedAt) * this.rate
+    const t = this.offset + (this.ctx.currentTime - this.startedAt) * this.rate
 
     if (this.loop && t >= this.loop.end) {
+      // seek() resumes playback when it interrupted a playing source
       void this.seek(this.loop.start)
-      void this.play()
       return
     }
 
@@ -162,7 +161,6 @@ export class AudioEngine {
     this.rate = Math.min(1.5, Math.max(0.5, rate))
     if (wasPlaying) {
       await this.seek(t)
-      await this.play()
     } else {
       this.emit()
     }

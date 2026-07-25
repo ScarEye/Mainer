@@ -42,6 +42,7 @@ export function UploadDropzone({ disabled, onFile }: Props) {
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
+        if (disabled) return
         if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click()
       }}
     >

@@ -60,9 +60,18 @@ function run(cmd, args, opts = {}) {
 }
 
 async function resolveYtDlp() {
+  // Prefer python -m on Windows (pip installs yt-dlp.cmd which spawn can't run without shell)
+  if (process.platform === 'win32') {
+    try {
+      await run('python', ['-m', 'yt_dlp', '--version'])
+      return ['python', '-m', 'yt_dlp']
+    } catch {
+      /* fall through */
+    }
+  }
   try {
-    await run('yt-dlp', ['--version'])
-    return ['yt-dlp']
+    await run('yt-dlp', ['--version'], process.platform === 'win32' ? { shell: true } : {})
+    return process.platform === 'win32' ? ['yt-dlp'] : ['yt-dlp']
   } catch {
     await run('python', ['-m', 'yt_dlp', '--version'])
     return ['python', '-m', 'yt_dlp']
@@ -340,11 +349,13 @@ function startSeparateJob(wavBuffer) {
   return jobId
 }
 
-// Cleanup old jobs every 10 minutes
+// Cleanup finished jobs every 10 minutes (never delete in-flight jobs)
 setInterval(() => {
   const cutoff = Date.now() - 30 * 60 * 1000
   for (const [id, job] of stemJobs) {
-    if (job.created < cutoff) stemJobs.delete(id)
+    if ((job.status === 'done' || job.status === 'error') && job.created < cutoff) {
+      stemJobs.delete(id)
+    }
   }
 }, 10 * 60 * 1000).unref?.()
 

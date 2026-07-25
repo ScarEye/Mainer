@@ -2,22 +2,40 @@ import { spawn } from 'node:child_process'
 import process from 'node:process'
 
 const children = []
+let shuttingDown = false
+
+function killTree(child) {
+  if (!child || child.killed) return
+  if (process.platform === 'win32' && child.pid) {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+  } else {
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 function start(command, args, name) {
   const child = spawn(command, args, {
     stdio: 'inherit',
     env: process.env,
-    // Avoid shell:true — Windows can still run node/npx via PATHEXT.
   })
   child.on('error', (err) => {
     console.error(`[${name}] failed to start:`, err)
-    process.exit(1)
+    if (!shuttingDown) process.exit(1)
   })
   child.on('exit', (code, signal) => {
+    if (shuttingDown) return
     if (signal) console.log(`[${name}] killed (${signal})`)
     else console.log(`[${name}] exited (${code ?? 'null'})`)
+    shuttingDown = true
     for (const c of children) {
-      if (c !== child && !c.killed) c.kill()
+      if (c !== child) killTree(c)
     }
     process.exit(code ?? 1)
   })
@@ -28,9 +46,9 @@ start(process.execPath, ['server/fetch-youtube.mjs'], 'api')
 start(process.execPath, ['./node_modules/vite/bin/vite.js', '--host'], 'web')
 
 function shutdown() {
-  for (const c of children) {
-    if (!c.killed) c.kill()
-  }
+  if (shuttingDown) return
+  shuttingDown = true
+  for (const c of children) killTree(c)
   process.exit(0)
 }
 

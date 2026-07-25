@@ -35,6 +35,9 @@ export default function App() {
   const engineRef = useRef(new AudioEngine())
   const micRef = useRef(new MicDetector())
   const judgedRef = useRef(new Set<string>())
+  const sessionGenRef = useRef(0)
+  const prevTimeRef = useRef(0)
+  const flashTimersRef = useRef<Partial<Record<DrumLane, number>>>({})
 
   const [buffer, setBuffer] = useState<AudioBuffer | null>(null)
   const [chart, setChart] = useState<DrumChart | null>(null)
@@ -66,21 +69,64 @@ export default function App() {
     localStorage.setItem('mainer.visualMode', mode)
   }
 
+  /** Seed judged set so past notes are not re-counted as misses after a reset. */
+  const seedJudgedBefore = useCallback((notes: ChartNote[] | undefined, beforeTime: number) => {
+    const judged = new Set<string>()
+    if (notes) {
+      for (const note of notes) {
+        if (note.t < beforeTime - HIT_WINDOW) judged.add(note.id)
+      }
+    }
+    judgedRef.current = judged
+  }, [])
+
+  const resetScore = useCallback(
+    (notes?: ChartNote[], fromTime?: number) => {
+      const t = fromTime ?? engineRef.current.currentTime
+      seedJudgedBefore(notes ?? chart?.notes, t)
+      setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
+      setLastJudgement(null)
+    },
+    [chart, seedJudgedBefore],
+  )
+
+  const clearLoopJudgements = useCallback((start: number, end: number, notes: ChartNote[]) => {
+    for (const note of notes) {
+      if (note.t >= start - HIT_WINDOW && note.t <= end + HIT_WINDOW) {
+        judgedRef.current.delete(note.id)
+      }
+    }
+  }, [])
+
+  const chartRef = useRef(chart)
+  chartRef.current = chart
+
   useEffect(() => {
     const engine = engineRef.current
+    const mic = micRef.current
     const unsub = engine.subscribe((s) => {
+      if (
+        s.playing &&
+        prevTimeRef.current - s.currentTime > 0.25 &&
+        s.currentTime < prevTimeRef.current
+      ) {
+        const loop = engine.getLoop()
+        const notes = chartRef.current?.notes
+        if (loop && notes) clearLoopJudgements(loop.start, loop.end, notes)
+      }
+      prevTimeRef.current = s.currentTime
       setCurrentTime(s.currentTime)
       setDuration(s.duration)
       setPlaying(s.playing)
       setRate(s.rate)
     })
-    micRef.current.setSongTimeProvider(() => engineRef.current.currentTime)
+    mic.setSongTimeProvider(() => engine.currentTime)
     return () => {
       unsub()
-      micRef.current.stop()
+      mic.stop()
       void engine.dispose()
     }
-  }, [])
+  }, [clearLoopJudgements])
 
   useEffect(() => {
     if (!chart || !playing) return
@@ -94,9 +140,12 @@ export default function App() {
   }, [chart, currentTime, playing])
 
   const flashLane = useCallback((lane: DrumLane) => {
+    const prev = flashTimersRef.current[lane]
+    if (prev) window.clearTimeout(prev)
     setHitFlash((f) => ({ ...f, [lane]: 1 }))
-    window.setTimeout(() => {
+    flashTimersRef.current[lane] = window.setTimeout(() => {
       setHitFlash((f) => ({ ...f, [lane]: 0 }))
+      delete flashTimersRef.current[lane]
     }, 120)
   }, [])
 
@@ -139,9 +188,7 @@ export default function App() {
     return mic.subscribe((hit) => judgeHit(hit.time))
   }, [judgeHit])
 
-  const loadFromArrayBuffer = async (arr: ArrayBuffer, title: string) => {
-    setStatus('loading')
-    setError(null)
+  const resetSessionUi = () => {
     setChart(null)
     setBuffer(null)
     setStemsReady(false)
@@ -150,18 +197,31 @@ export default function App() {
     judgedRef.current = new Set()
     setLoopStart(null)
     setLoopEnd(null)
+    setSelectedId(null)
+    setLastJudgement(null)
+    setSplitMessage(null)
+    setError(null)
     engineRef.current.setLoop(null, null)
+  }
+
+  const loadFromArrayBuffer = async (arr: ArrayBuffer, title: string) => {
+    const gen = ++sessionGenRef.current
+    setStatus('loading')
+    resetSessionUi()
 
     try {
       const ctx = await engineRef.current.ensureContext()
       const decoded = await ctx.decodeAudioData(arr.slice(0))
+      if (gen !== sessionGenRef.current) return
       setLoadingMsg('Building drum chart…')
       const nextChart = await analyzeDrumChart(decoded, title)
+      if (gen !== sessionGenRef.current) return
       await engineRef.current.loadBuffer(decoded)
       setBuffer(decoded)
       setChart(nextChart)
       setStatus('ready')
     } catch (e) {
+      if (gen !== sessionGenRef.current) return
       console.error(e)
       setStatus('error')
       setError(e instanceof Error ? e.message : 'Could not load that audio.')
@@ -179,11 +239,14 @@ export default function App() {
     setLoadingMsg('Fetching from YouTube via local helper…')
     setStatus('loading')
     setError(null)
+    const gen = sessionGenRef.current
     try {
       const { arrayBuffer, title } = await fetchYoutubeTrack(url)
+      if (gen !== sessionGenRef.current) return
       setLoadingMsg('Decoding audio…')
       await loadFromArrayBuffer(arrayBuffer, title)
     } catch (e) {
+      if (gen !== sessionGenRef.current) return
       console.error(e)
       setStatus('error')
       setError(e instanceof Error ? e.message : 'YouTube fetch failed.')
@@ -192,26 +255,36 @@ export default function App() {
 
   const onSplitStems = async () => {
     if (!buffer || splitting) return
+    const gen = sessionGenRef.current
+    const title = chart?.title
     setSplitting(true)
     setError(null)
     setSplitMessage('Preparing audio…')
     try {
       const wav = encodeWav(buffer)
-      const raw = await separateStems(wav, (msg) => setSplitMessage(msg))
+      const raw = await separateStems(wav, (msg) => {
+        if (gen === sessionGenRef.current) setSplitMessage(msg)
+      })
+      if (gen !== sessionGenRef.current) return
       setSplitMessage('Decoding stems…')
       const ctx = await engineRef.current.ensureContext()
       const decoded = {} as Record<StemId, AudioBuffer>
       for (const id of STEM_IDS) {
         decoded[id] = await ctx.decodeAudioData(raw[id].slice(0))
       }
+      if (gen !== sessionGenRef.current) return
       await engineRef.current.loadStems(decoded)
+      setBuffer(decoded.drums)
       setStemsReady(true)
       setStemLevels(engineRef.current.getStemLevels())
 
-      if (chart) {
-        const drumChart = await analyzeDrumChart(decoded.drums, chart.title)
+      if (title) {
+        const drumChart = await analyzeDrumChart(decoded.drums, title)
+        if (gen !== sessionGenRef.current) return
         setChart(drumChart)
-        resetScore()
+        seedJudgedBefore(drumChart.notes, engineRef.current.currentTime)
+        setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
+        setLastJudgement(null)
       }
       const soloDrums = defaultStemLevels()
       for (const id of STEM_IDS) {
@@ -221,11 +294,12 @@ export default function App() {
       setStemLevels(soloDrums)
       setSplitMessage(null)
     } catch (e) {
+      if (gen !== sessionGenRef.current) return
       console.error(e)
       setError(e instanceof Error ? e.message : 'Stem split failed.')
       setSplitMessage(null)
     } finally {
-      setSplitting(false)
+      if (gen === sessionGenRef.current) setSplitting(false)
     }
   }
 
@@ -255,19 +329,25 @@ export default function App() {
     return Math.round((score.hits / total) * 100)
   }, [score])
 
-  const resetScore = () => {
-    judgedRef.current = new Set()
-    setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
-    setLastJudgement(null)
-  }
-
   const togglePlay = async () => {
     const engine = engineRef.current
     if (playing) await engine.pause()
     else {
-      if (engine.currentTime >= engine.duration - 0.05) await engine.seek(0)
+      if (engine.currentTime >= engine.duration - 0.05) {
+        seedJudgedBefore(chart?.notes, 0)
+        setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
+        setLastJudgement(null)
+        await engine.seek(0)
+      }
       await engine.play()
     }
+  }
+
+  const restartTrack = async () => {
+    seedJudgedBefore(chart?.notes, 0)
+    setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
+    setLastJudgement(null)
+    await engineRef.current.seek(0)
   }
 
   const toggleMic = async () => {
@@ -287,7 +367,9 @@ export default function App() {
   const updateNotes = (notes: ChartNote[]) => {
     if (!chart) return
     setChart({ ...chart, notes })
-    resetScore()
+    seedJudgedBefore(notes, engineRef.current.currentTime)
+    setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
+    setLastJudgement(null)
   }
 
   const onSetLoopPoint = (which: 'start' | 'end', t: number) => {
@@ -305,6 +387,18 @@ export default function App() {
     setLoopStart(null)
     setLoopEnd(null)
     engineRef.current.setLoop(null, null)
+  }
+
+  const newTrack = () => {
+    sessionGenRef.current += 1
+    if (micOn) {
+      micRef.current.stop()
+      setMicOn(false)
+    }
+    void engineRef.current.stop()
+    setSplitting(false)
+    resetSessionUi()
+    setStatus('idle')
   }
 
   return (
@@ -381,7 +475,7 @@ export default function App() {
               <button type="button" className="btn btn--primary" onClick={() => void togglePlay()}>
                 {playing ? 'Pause' : 'Play'}
               </button>
-              <button type="button" className="btn btn--ghost" onClick={() => void engineRef.current.seek(0)}>
+              <button type="button" className="btn btn--ghost" onClick={() => void restartTrack()}>
                 Restart
               </button>
               <label className="rate">
@@ -402,7 +496,7 @@ export default function App() {
               >
                 {micOn ? 'Mic on' : 'Enable mic'}
               </button>
-              <button type="button" className="btn btn--ghost" onClick={resetScore}>
+              <button type="button" className="btn btn--ghost" onClick={() => resetScore()}>
                 Reset score
               </button>
               {(loopStart != null || loopEnd != null) && (
@@ -410,17 +504,7 @@ export default function App() {
                   Clear loop
                 </button>
               )}
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={() => {
-                  void engineRef.current.stop()
-                  setStatus('idle')
-                  setChart(null)
-                  setBuffer(null)
-                  setStemsReady(false)
-                }}
-              >
+              <button type="button" className="btn btn--ghost" onClick={newTrack}>
                 New track
               </button>
               <span className="time">

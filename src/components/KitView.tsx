@@ -66,7 +66,7 @@ export function KitView({
     let best: ChartNote | null = null
     for (const note of notes) {
       if (note.t < currentTime - 0.05) continue
-      if (note.t > currentTime + lookAheadSec) break
+      if (note.t > currentTime + lookAheadSec) continue
       if (!best || note.t < best.t) best = note
     }
     return best
