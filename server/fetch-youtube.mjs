@@ -223,7 +223,7 @@ async function getDemucsConfig() {
       device: 'cpu',
       cuda: false,
       vramMb: 0,
-      segment: 10,
+      segment: 7,
       overlap: 0.1,
       shifts: 0,
     }
@@ -244,7 +244,7 @@ function runDemucs(inputPath, outDir, config, onLog) {
     '--overlap',
     String(config.overlap),
     '--segment',
-    String(config.segment),
+    String(Math.floor(Number(config.segment) || 7)),
     '--out',
     outDir,
     inputPath,

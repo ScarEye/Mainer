@@ -1,9 +1,11 @@
 """Report Demucs device + tuned settings for this machine."""
 import json
 import os
-import sys
 
 import torch
+
+# htdemucs max segment is ~7.8s; CLI --segment only accepts ints → use 7.
+HTDEMUCS_MAX_SEGMENT_INT = 7
 
 force = os.environ.get('MAINER_DEMUCS_DEVICE', '').strip().lower()
 cuda_ok = torch.cuda.is_available()
@@ -15,15 +17,14 @@ vram_mb = 0
 if use_cuda:
     vram_mb = int(torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
 
-# Speed-tuned defaults (6 GB laptop GPUs need smaller segments)
-segment = int(os.environ.get('MAINER_DEMUCS_SEGMENT', '0') or '0')
-if segment <= 0:
-    if use_cuda and vram_mb and vram_mb < 8000:
-        segment = 8
-    elif use_cuda:
-        segment = 12
-    else:
-        segment = 10
+env_seg = os.environ.get('MAINER_DEMUCS_SEGMENT', '').strip()
+if env_seg:
+    segment = int(float(env_seg))
+else:
+    # Smaller chunk on very low VRAM
+    segment = 6 if (use_cuda and vram_mb and vram_mb < 5000) else HTDEMUCS_MAX_SEGMENT_INT
+
+segment = max(1, min(segment, HTDEMUCS_MAX_SEGMENT_INT))
 
 overlap = float(os.environ.get('MAINER_DEMUCS_OVERLAP', '0.1'))
 shifts = int(os.environ.get('MAINER_DEMUCS_SHIFTS', '0'))
