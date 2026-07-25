@@ -1,8 +1,13 @@
 import { spawn } from 'node:child_process'
 import process from 'node:process'
+import { killMainerPorts } from './kill-ports.mjs'
 
 const children = []
 let shuttingDown = false
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
 
 function killTree(child) {
   if (!child || child.killed) return
@@ -42,9 +47,6 @@ function start(command, args, name) {
   children.push(child)
 }
 
-start(process.execPath, ['server/fetch-youtube.mjs'], 'api')
-start(process.execPath, ['./node_modules/vite/bin/vite.js', '--host'], 'web')
-
 function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
@@ -54,3 +56,17 @@ function shutdown() {
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+
+console.log('Clearing ports 5173 (web) and 8787 (API)…')
+const killed = killMainerPorts()
+if (killed.length) {
+  for (const k of killed) console.log(`  stopped PID ${k.pid} on :${k.port}`)
+  await sleep(800)
+} else {
+  console.log('  ports were free')
+}
+
+console.log('Starting API + Vite…')
+start(process.execPath, ['server/fetch-youtube.mjs'], 'api')
+start(process.execPath, ['./node_modules/vite/bin/vite.js', '--host'], 'web')
+console.log('Open http://localhost:5173/')
