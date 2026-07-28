@@ -405,8 +405,10 @@ export default function App() {
     <div className="app">
       <header className="top">
         <div className="brand">
-          <span className="brand__mark">Mainer</span>
-          <span className="brand__tag">Upload a track or paste a YouTube link.</span>
+          <span className="brand__mark">
+            MAINER<span>.DEV</span>
+          </span>
+          <span className="brand__tag">// upload a track · practice drums_</span>
         </div>
         {chart && (
           <div className="hud">

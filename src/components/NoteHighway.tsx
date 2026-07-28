@@ -52,7 +52,7 @@ export function NoteHighway({ notes, currentTime, hitFlash, lookAheadSec = 2.4 }
         ctx.fillRect(x, 0, laneW, h)
 
         ctx.fillStyle = 'rgba(232,220,200,0.4)'
-        ctx.font = `600 ${laneW < 70 ? 9 : 11}px "DM Sans", sans-serif`
+        ctx.font = `600 ${laneW < 70 ? 9 : 11}px "Share Tech Mono", monospace`
         ctx.textAlign = 'center'
         ctx.fillText(LANE_SHORT[lane], x + laneW / 2, 18)
 
@@ -63,15 +63,15 @@ export function NoteHighway({ notes, currentTime, hitFlash, lookAheadSec = 2.4 }
         }
       })
 
-      ctx.strokeStyle = 'rgba(255, 210, 150, 0.85)'
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)'
       ctx.lineWidth = 3
       ctx.beginPath()
       ctx.moveTo(padX, hitY)
       ctx.lineTo(w - padX, hitY)
       ctx.stroke()
 
-      ctx.fillStyle = 'rgba(255,210,150,0.5)'
-      ctx.font = '500 11px "DM Sans", sans-serif'
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.65)'
+      ctx.font = '500 11px "Share Tech Mono", monospace'
       ctx.textAlign = 'left'
       ctx.fillText('HIT', padX, hitY - 8)
 

@@ -35,12 +35,12 @@ export const LANE_SHORT: Record<DrumLane, string> = {
 }
 
 export const LANE_COLORS: Record<DrumLane, string> = {
-  kick: '#f0713a',
-  snare: '#e8c547',
-  tom: '#d9896b',
-  hat: '#5ec8c0',
-  crash: '#c9a0ff',
-  ride: '#7eb6ff',
+  kick: '#00f0ff',
+  snare: '#ff2d75',
+  tom: '#a855f7',
+  hat: '#7dd3fc',
+  crash: '#f0abfc',
+  ride: '#67e8f9',
 }
 
 /** Practice stage visual style. */

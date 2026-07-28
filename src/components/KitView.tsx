@@ -77,14 +77,14 @@ export function KitView({
       <svg className="kit-view__svg" viewBox="0 0 1000 620" role="img" aria-label="Drum kit">
         <defs>
           <radialGradient id="kitFloor" cx="50%" cy="70%" r="55%">
-            <stop offset="0%" stopColor="#1a1d27" />
-            <stop offset="100%" stopColor="#0a0b0f" />
+            <stop offset="0%" stopColor="#12121a" />
+            <stop offset="100%" stopColor="#0a0a0f" />
           </radialGradient>
         </defs>
         <rect width="1000" height="620" fill="url(#kitFloor)" />
 
         {/* Stand lines */}
-        <g stroke="rgba(232,220,200,0.18)" strokeWidth="4" fill="none">
+        <g stroke="rgba(0, 240, 255, 0.12)" strokeWidth="4" fill="none">
           <line x1="220" y1="250" x2="220" y2="480" />
           <line x1="320" y1="130" x2="380" y2="420" />
           <line x1="700" y1="160" x2="640" y2="430" />
@@ -115,8 +115,8 @@ export function KitView({
                 cy={layout.cy}
                 rx={layout.rx}
                 ry={layout.ry}
-                fill={layout.shape === 'cymbal' ? '#c4a574' : '#2a2f3d'}
-                stroke={glow ? color : 'rgba(232,220,200,0.35)'}
+                fill={layout.shape === 'cymbal' ? '#1e1e30' : '#1a1a2e'}
+                stroke={glow ? color : 'rgba(0, 240, 255, 0.28)'}
                 strokeWidth={glow ? 5 : 2.5}
                 opacity={0.75 + intensity * 0.25}
               />
@@ -133,8 +133,8 @@ export function KitView({
                 x={layout.cx}
                 y={layout.cy + (layout.shape === 'cymbal' ? 42 : 8)}
                 textAnchor="middle"
-                fill={glow || isNext ? color : 'rgba(232,220,200,0.55)'}
-                fontFamily="DM Sans, sans-serif"
+                fill={glow || isNext ? color : 'rgba(224, 224, 224, 0.55)'}
+                fontFamily="Orbitron, sans-serif"
                 fontSize="22"
                 fontWeight="700"
               >

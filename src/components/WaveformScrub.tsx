@@ -73,25 +73,25 @@ export function WaveformScrub({
           loopEnd != null &&
           t >= Math.min(loopStart, loopEnd) &&
           t <= Math.max(loopStart, loopEnd)
-        ctx.fillStyle = inLoop ? 'rgba(240, 113, 58, 0.55)' : 'rgba(232, 220, 200, 0.28)'
+        ctx.fillStyle = inLoop ? 'rgba(0, 240, 255, 0.45)' : 'rgba(0, 240, 255, 0.18)'
         ctx.fillRect(i * barW, (h - bh) / 2, Math.max(1, barW - 1), bh)
       }
     }
 
     if (duration > 0) {
       const x = (currentTime / duration) * w
-      ctx.fillStyle = '#e8c547'
+      ctx.fillStyle = '#00f0ff'
       ctx.fillRect(x - 1, 0, 2, h)
     }
 
     if (loopStart != null && duration > 0) {
       const x = (loopStart / duration) * w
-      ctx.fillStyle = '#5ec8c0'
+      ctx.fillStyle = '#ff2d75'
       ctx.fillRect(x - 1, 0, 2, h)
     }
     if (loopEnd != null && duration > 0) {
       const x = (loopEnd / duration) * w
-      ctx.fillStyle = '#5ec8c0'
+      ctx.fillStyle = '#ff2d75'
       ctx.fillRect(x - 1, 0, 2, h)
     }
   }, [peaks, currentTime, duration, loopStart, loopEnd])

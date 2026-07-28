@@ -93,28 +93,28 @@ export function NotationView({ notes, currentTime, hitFlash, lookAheadSec = 3.2 
       }
 
       ctx.fillStyle = 'rgba(232,220,200,0.7)'
-      ctx.font = `700 ${Math.round(lineGap * 1.6)}px "DM Sans", sans-serif`
+      ctx.font = `700 ${Math.round(lineGap * 1.6)}px "Orbitron", sans-serif`
       ctx.textAlign = 'center'
       ctx.fillText('percussion', marginL / 2, staffTop + lineGap * 2.2)
-      ctx.font = `600 11px "DM Sans", sans-serif`
+      ctx.font = `600 11px "Share Tech Mono", monospace`
       ctx.fillText('clef', marginL / 2, staffTop + lineGap * 3.2)
 
       ctx.textAlign = 'right'
-      ctx.font = '600 10px "DM Sans", sans-serif'
+      ctx.font = '600 10px "Share Tech Mono", monospace'
       for (const lane of LANES) {
         const y = staffTop + STAFF_Y[lane] * (lineGap / 2)
         ctx.fillStyle = LANE_COLORS[lane]
         ctx.fillText(LANE_SHORT[lane], marginL - 8, y + 3)
       }
 
-      ctx.strokeStyle = 'rgba(255, 210, 150, 0.9)'
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)'
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(playheadX, staffTop - lineGap)
       ctx.lineTo(playheadX, staffTop + 4.5 * lineGap)
       ctx.stroke()
-      ctx.fillStyle = 'rgba(255,210,150,0.6)'
-      ctx.font = '500 11px "DM Sans", sans-serif'
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.7)'
+      ctx.font = '500 11px "Share Tech Mono", monospace'
       ctx.textAlign = 'center'
       ctx.fillText('NOW', playheadX, staffTop - lineGap - 6)
 
@@ -141,7 +141,7 @@ export function NotationView({ notes, currentTime, hitFlash, lookAheadSec = 3.2 
       }
 
       ctx.fillStyle = 'rgba(154,144,132,0.9)'
-      ctx.font = '500 11px "DM Sans", sans-serif'
+      ctx.font = '500 11px "Share Tech Mono", monospace'
       ctx.textAlign = 'left'
       ctx.fillText(
         'X = kick · ○ = drums · ◇ = cymbals  ·  notes approach from the right',
