@@ -7,6 +7,7 @@ import { MicDetector } from './audio/micDetector'
 import { encodeWav } from './audio/wav'
 import { ChartEditor } from './components/ChartEditor'
 import { PracticeVisual } from './components/PracticeVisual'
+import { ProgressCard } from './components/ProgressCard'
 import { StemMixer } from './components/StemMixer'
 import { UploadDropzone } from './components/UploadDropzone'
 import { VisualModePicker } from './components/VisualModePicker'
@@ -23,12 +24,54 @@ type Score = {
   bestCombo: number
 }
 
+type ProgressState = {
+  label: string
+  detail: string
+  percent: number
+}
+
 const HIT_WINDOW = 0.12
 
 function formatTime(t: number) {
   const m = Math.floor(t / 60)
   const s = Math.floor(t % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function progress(label: string, detail: string, percent: number): ProgressState {
+  return { label, detail, percent: Math.max(0, Math.min(100, Math.round(percent))) }
+}
+
+function mergeProgress(prev: ProgressState | null, next: ProgressState): ProgressState {
+  return prev && prev.label === next.label
+    ? { ...next, percent: Math.max(prev.percent, next.percent) }
+    : next
+}
+
+function youtubePercent(detail: string) {
+  const text = detail.toLowerCase()
+  if (text.includes('contacting')) return 10
+  if (text.includes('downloading audio')) return 26
+  if (text.includes('audio downloaded')) return 38
+  if (text.includes('decoding')) return 52
+  if (text.includes('building drum chart')) return 84
+  return 14
+}
+
+function splitPercent(detail: string) {
+  const text = detail.toLowerCase()
+  if (text.includes('preparing audio')) return 8
+  if (text.includes('uploading audio')) return 16
+  if (text.includes('separation started')) return 22
+  if (text.includes('queued')) return 26
+  if (text.includes('saving audio')) return 32
+  if (text.includes('running demucs')) return 56
+  if (text.includes('collecting stem files')) return 78
+  if (text.includes('downloading stem files')) return 86
+  if (text.includes('decoding stems')) return 92
+  if (text.includes('rebuilding drum chart')) return 96
+  if (text.includes('stems ready')) return 100
+  return 60
 }
 
 export default function App() {
@@ -42,7 +85,7 @@ export default function App() {
   const [buffer, setBuffer] = useState<AudioBuffer | null>(null)
   const [chart, setChart] = useState<DrumChart | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [loadingMsg, setLoadingMsg] = useState('Analyzing track… building drum chart')
+  const [loadingProgress, setLoadingProgress] = useState<ProgressState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -58,7 +101,7 @@ export default function App() {
   const [stemLevels, setStemLevels] = useState<StemLevels>(defaultStemLevels())
   const [stemsReady, setStemsReady] = useState(false)
   const [splitting, setSplitting] = useState(false)
-  const [splitMessage, setSplitMessage] = useState<string | null>(null)
+  const [splitProgress, setSplitProgress] = useState<ProgressState | null>(null)
   const [visualMode, setVisualMode] = useState<VisualMode>(() => {
     const saved = localStorage.getItem('mainer.visualMode')
     return saved === 'notation' || saved === 'kit' || saved === 'digital' ? saved : 'digital'
@@ -199,7 +242,7 @@ export default function App() {
     setLoopEnd(null)
     setSelectedId(null)
     setLastJudgement(null)
-    setSplitMessage(null)
+    setSplitProgress(null)
     setError(null)
     engineRef.current.setLoop(null, null)
   }
@@ -207,48 +250,60 @@ export default function App() {
   const loadFromArrayBuffer = async (arr: ArrayBuffer, title: string) => {
     const gen = ++sessionGenRef.current
     setStatus('loading')
+    setLoadingProgress(progress('Loading track', 'Decoding audio…', 52))
     resetSessionUi()
 
     try {
       const ctx = await engineRef.current.ensureContext()
       const decoded = await ctx.decodeAudioData(arr.slice(0))
       if (gen !== sessionGenRef.current) return
-      setLoadingMsg('Building drum chart…')
+      setLoadingProgress((prev) => mergeProgress(prev, progress('Loading track', 'Building drum chart…', 84)))
       const nextChart = await analyzeDrumChart(decoded, title)
       if (gen !== sessionGenRef.current) return
       await engineRef.current.loadBuffer(decoded)
       setBuffer(decoded)
       setChart(nextChart)
+      setLoadingProgress((prev) => mergeProgress(prev, progress('Loading track', 'Track ready.', 100)))
       setStatus('ready')
+      setLoadingProgress(null)
     } catch (e) {
       if (gen !== sessionGenRef.current) return
       console.error(e)
       setStatus('error')
+      setLoadingProgress(null)
       setError(e instanceof Error ? e.message : 'Could not load that audio.')
     }
   }
 
   const onFile = async (file: File) => {
-    setLoadingMsg('Decoding audio…')
+    setLoadingProgress(progress('Loading track', 'Reading local audio file…', 18))
     const title = file.name.replace(/\.[^.]+$/, '')
     const arr = await file.arrayBuffer()
     await loadFromArrayBuffer(arr, title)
   }
 
   const onYoutubeUrl = async (url: string) => {
-    setLoadingMsg('Fetching from YouTube via local helper…')
     setStatus('loading')
+    setLoadingProgress(progress('Fetching track', 'Contacting local helper…', 10))
     setError(null)
     const gen = sessionGenRef.current
     try {
-      const { arrayBuffer, title } = await fetchYoutubeTrack(url)
+      const { arrayBuffer, title } = await fetchYoutubeTrack(url, (detail) => {
+        if (gen !== sessionGenRef.current) return
+        setLoadingProgress((prev) =>
+          mergeProgress(prev, progress('Fetching track', detail, youtubePercent(detail))),
+        )
+      })
       if (gen !== sessionGenRef.current) return
-      setLoadingMsg('Decoding audio…')
+      setLoadingProgress((prev) =>
+        mergeProgress(prev, progress('Loading track', 'Decoding audio…', 52)),
+      )
       await loadFromArrayBuffer(arrayBuffer, title)
     } catch (e) {
       if (gen !== sessionGenRef.current) return
       console.error(e)
       setStatus('error')
+      setLoadingProgress(null)
       setError(e instanceof Error ? e.message : 'YouTube fetch failed.')
     }
   }
@@ -259,14 +314,15 @@ export default function App() {
     const title = chart?.title
     setSplitting(true)
     setError(null)
-    setSplitMessage('Preparing audio…')
+    setSplitProgress(progress('Splitting stems', 'Preparing audio…', 8))
     try {
       const wav = encodeWav(buffer)
       const raw = await separateStems(wav, (msg) => {
-        if (gen === sessionGenRef.current) setSplitMessage(msg)
+        if (gen !== sessionGenRef.current) return
+        setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', msg, splitPercent(msg))))
       })
       if (gen !== sessionGenRef.current) return
-      setSplitMessage('Decoding stems…')
+      setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', 'Decoding stems…', 92)))
       const ctx = await engineRef.current.ensureContext()
       const decoded = {} as Record<StemId, AudioBuffer>
       for (const id of STEM_IDS) {
@@ -279,6 +335,9 @@ export default function App() {
       setStemLevels(engineRef.current.getStemLevels())
 
       if (title) {
+        setSplitProgress((prev) =>
+          mergeProgress(prev, progress('Splitting stems', 'Rebuilding drum chart from the drum stem…', 96)),
+        )
         const drumChart = await analyzeDrumChart(decoded.drums, title)
         if (gen !== sessionGenRef.current) return
         setChart(drumChart)
@@ -292,12 +351,15 @@ export default function App() {
       }
       engineRef.current.setAllStemLevels(soloDrums)
       setStemLevels(soloDrums)
-      setSplitMessage(null)
+      setSplitProgress(progress('Splitting stems', 'Stems ready.', 100))
+      window.setTimeout(() => {
+        if (sessionGenRef.current === gen) setSplitProgress(null)
+      }, 900)
     } catch (e) {
       if (gen !== sessionGenRef.current) return
       console.error(e)
       setError(e instanceof Error ? e.message : 'Stem split failed.')
-      setSplitMessage(null)
+      setSplitProgress(null)
     } finally {
       if (gen === sessionGenRef.current) setSplitting(false)
     }
@@ -397,6 +459,8 @@ export default function App() {
     }
     void engineRef.current.stop()
     setSplitting(false)
+    setLoadingProgress(null)
+    setSplitProgress(null)
     resetSessionUi()
     setStatus('idle')
   }
@@ -434,7 +498,13 @@ export default function App() {
           <UploadDropzone disabled={status === 'loading'} onFile={onFile} />
           <div className="landing__or">or</div>
           <YoutubeImport disabled={status === 'loading'} onSubmitUrl={(url) => void onYoutubeUrl(url)} />
-          {status === 'loading' && <p className="status">{loadingMsg}</p>}
+          {status === 'loading' && loadingProgress && (
+            <ProgressCard
+              label={loadingProgress.label}
+              detail={loadingProgress.detail}
+              percent={loadingProgress.percent}
+            />
+          )}
           {status === 'error' && error && <p className="status status--error">{error}</p>}
         </main>
       )}
@@ -521,7 +591,7 @@ export default function App() {
               levels={stemLevels}
               ready={stemsReady}
               splitting={splitting}
-              splitMessage={splitMessage}
+              splitProgress={splitProgress}
               onChange={onStemChange}
               onSolo={onSolo}
               onSplit={() => void onSplitStems()}

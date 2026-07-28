@@ -1,6 +1,10 @@
-export async function fetchYoutubeTrack(url: string): Promise<{ arrayBuffer: ArrayBuffer; title: string }> {
+export async function fetchYoutubeTrack(
+  url: string,
+  onProgress?: (message: string) => void,
+): Promise<{ arrayBuffer: ArrayBuffer; title: string }> {
   let res: Response
   try {
+    onProgress?.('Contacting local helper…')
     res = await fetch('/api/youtube', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -28,9 +32,11 @@ export async function fetchYoutubeTrack(url: string): Promise<{ arrayBuffer: Arr
 
   const titleHeader = res.headers.get('X-Track-Title')
   const title = titleHeader ? decodeURIComponent(titleHeader) : 'YouTube track'
+  onProgress?.('Downloading audio from YouTube…')
   const arrayBuffer = await res.arrayBuffer()
   if (!arrayBuffer.byteLength) {
     throw new Error('YouTube helper returned empty audio.')
   }
+  onProgress?.('Audio downloaded.')
   return { arrayBuffer, title }
 }

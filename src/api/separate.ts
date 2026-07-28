@@ -27,10 +27,7 @@ async function pollJob(
   jobId: string,
   onProgress?: (message: string) => void,
 ): Promise<void> {
-  const started = Date.now()
-  const maxMs = 45 * 60 * 1000
-
-  while (Date.now() - started < maxMs) {
+  while (true) {
     const res = await fetch(`/api/separate/${jobId}`)
     if (!res.ok) {
       let message = `Status check failed (${res.status})`
@@ -53,8 +50,6 @@ async function pollJob(
 
     await sleep(1500)
   }
-
-  throw new Error('Stem split timed out after 45 minutes.')
 }
 
 export async function separateStems(

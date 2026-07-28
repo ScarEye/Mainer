@@ -1,11 +1,12 @@
 import type { StemId, StemLevels } from '../types/chart'
 import { STEM_IDS, STEM_LABELS } from '../types/chart'
+import { ProgressCard } from './ProgressCard'
 
 type Props = {
   levels: StemLevels
   ready: boolean
   splitting: boolean
-  splitMessage?: string | null
+  splitProgress?: { label: string; detail: string; percent: number } | null
   onChange: (id: StemId, patch: Partial<{ volume: number; muted: boolean }>) => void
   onSolo: (id: StemId) => void
   onSplit: () => void
@@ -16,7 +17,7 @@ export function StemMixer({
   levels,
   ready,
   splitting,
-  splitMessage,
+  splitProgress,
   onChange,
   onSolo,
   onSplit,
@@ -43,7 +44,14 @@ export function StemMixer({
         </p>
       )}
 
-      {splitting && splitMessage && <p className="mixer__progress">{splitMessage}</p>}
+      {splitting && splitProgress && (
+        <ProgressCard
+          label={splitProgress.label}
+          detail={splitProgress.detail}
+          percent={splitProgress.percent}
+          compact
+        />
+      )}
 
       <ul className={`mixer__list ${ready ? '' : 'is-disabled'}`}>
         {STEM_IDS.map((id) => {

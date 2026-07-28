@@ -262,6 +262,65 @@ input {
   color: var(--danger);
 }
 
+.progress-card {
+  width: min(560px, 92vw);
+  margin: 0 auto;
+  padding: 0.85rem 0.95rem;
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(18, 18, 26, 0.96), rgba(10, 10, 15, 0.96)),
+    rgba(18, 18, 26, 0.96);
+  border: 1px solid rgba(0, 240, 255, 0.22);
+  box-shadow: inset 0 0 24px rgba(0, 240, 255, 0.04), var(--glow-primary);
+}
+
+.progress-card--compact {
+  width: 100%;
+  margin: 0;
+}
+
+.progress-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.progress-card__head strong {
+  font-weight: 600;
+}
+
+.progress-card__bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(30, 30, 48, 0.95);
+  border: 1px solid rgba(0, 240, 255, 0.18);
+}
+
+.progress-card__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--secondary), var(--accent-purple));
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.45);
+  transition: width 0.35s ease;
+}
+
+.progress-card__detail {
+  margin: 0.55rem 0 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .studio {
   flex: 1;
   display: grid;
@@ -542,19 +601,6 @@ input {
   color: var(--muted);
   font-size: 0.8rem;
   line-height: 1.35;
-}
-
-.mixer__progress {
-  margin: 0;
-  padding: 0.55rem 0.7rem;
-  border-radius: 6px;
-  background: rgba(0, 240, 255, 0.08);
-  border: 1px solid rgba(0, 240, 255, 0.28);
-  color: var(--primary);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  line-height: 1.35;
-  word-break: break-word;
 }
 
 .mixer__list {

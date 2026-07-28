@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const PORT = Number(process.env.MAINER_API_PORT || 8787)
-const MAX_DURATION_SEC = 12 * 60
 const STEM_NAMES = ['drums', 'bass', 'vocals', 'other']
 
 /** @type {Map<string, {
@@ -137,9 +136,6 @@ async function fetchYoutubeAudio(rawUrl) {
     const metaLine = metaProc.stdout.trim()
     if (!metaLine) throw new Error('Could not read video metadata.')
     const meta = JSON.parse(metaLine)
-    if (typeof meta.duration === 'number' && meta.duration > MAX_DURATION_SEC) {
-      throw new Error(`Video is too long (max ${MAX_DURATION_SEC / 60} minutes).`)
-    }
 
     const outTemplate = path.join(dir, '%(id)s.%(ext)s')
     const dlArgs = [
@@ -451,10 +447,6 @@ const server = http.createServer(async (req, res) => {
       const wav = await readBody(req)
       if (!wav.length) {
         sendJson(res, 400, { error: 'Empty audio body.' })
-        return
-      }
-      if (wav.length > 80 * 1024 * 1024) {
-        sendJson(res, 413, { error: 'Audio too large (max ~80MB WAV).' })
         return
       }
       console.log(`Starting stem job (${(wav.length / 1024 / 1024).toFixed(1)} MB)…`)
