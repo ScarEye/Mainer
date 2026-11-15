@@ -49,3 +49,7 @@ python -m pip install demucs
 Optional env: `MAINER_DEMUCS_DEVICE=cuda|cpu`, `MAINER_DEMUCS_SEGMENT=7`
 
 After a track loads, click **Split stems**, then Solo/Mute drums to practice isolated.
+
+## License
+
+[MIT](LICENSE) © 2026 Zaid Wajid

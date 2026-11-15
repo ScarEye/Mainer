@@ -2,6 +2,7 @@
   "name": "mainer",
   "private": true,
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "start": "node scripts/dev.mjs",
