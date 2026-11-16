@@ -9,14 +9,17 @@ type Props = {
   lookAheadSec?: number
 }
 
-/** Diatonic steps up from the bottom line. Top line is 8. */
+/**
+ * Positions on a 5-line staff. Even steps are lines (0 bottom … 8 top).
+ * Odd steps are spaces. Cymbals stay within one ledger of that staff.
+ */
 const DRUM_STEP: Record<DrumLane, number> = {
   kick: 1,
   snare: 5,
   tom: 7,
-  hat: 9,
-  ride: 11,
-  crash: 13,
+  hat: 8,
+  ride: 9,
+  crash: 10,
 }
 
 function yForStep(staffTop: number, lineGap: number, step: number) {
@@ -33,7 +36,7 @@ function drawPercussionClef(ctx: CanvasRenderingContext2D, x: number, staffTop: 
 
 function drawLedgers(ctx: CanvasRenderingContext2D, x: number, staffTop: number, lineGap: number, step: number) {
   if (step < 10) return
-  ctx.strokeStyle = 'rgba(232,220,200,0.5)'
+  ctx.strokeStyle = 'rgba(232,220,200,0.72)'
   ctx.lineWidth = 1.4
   const half = Math.max(12, lineGap * 0.9)
   for (let s = 10; s <= step; s += 2) {
@@ -89,17 +92,21 @@ export function NotationView({ notes, currentTime, hitFlash, lookAheadSec = 3.2 
       ctx.fillStyle = '#0f1117'
       ctx.fillRect(0, 0, w, h)
 
-      const marginL = 92
+      const marginL = 72
       const marginR = 28
-      const lineGap = Math.max(22, Math.min(34, (h - 120) / 12))
+      const lineGap = Math.max(16, Math.min(44, (h - 88) / 8))
       const staffH = lineGap * 4
-      const staffTop = Math.max(lineGap * 3.4, (h - staffH) / 2 - lineGap)
-      const playheadX = marginL + lineGap * 2.6
+      const staffTop = Math.max(lineGap * 2.1, (h - staffH) / 2 - lineGap * 0.2)
+      const playheadX = marginL + lineGap * 2.4
       const pxPerSec = (w - playheadX - marginR) / ahead
-      const headR = Math.max(7, lineGap * 0.34)
+      const headR = Math.max(6, lineGap * 0.42)
 
-      ctx.strokeStyle = 'rgba(232,220,200,0.4)'
-      ctx.lineWidth = 1.5
+      ctx.strokeStyle = 'rgba(232,220,200,0.82)'
+      ctx.lineWidth = 1.6
+      ctx.beginPath()
+      ctx.moveTo(marginL, staffTop)
+      ctx.lineTo(marginL, staffTop + staffH)
+      ctx.stroke()
       for (let i = 0; i < 5; i++) {
         const y = staffTop + i * lineGap
         ctx.beginPath()
@@ -111,15 +118,17 @@ export function NotationView({ notes, currentTime, hitFlash, lookAheadSec = 3.2 
 
       ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)'
       ctx.lineWidth = 2
+      const barTop = staffTop - lineGap * 1.35
+      const barBot = staffTop + staffH + lineGap * 0.7
       ctx.beginPath()
-      ctx.moveTo(playheadX, staffTop - lineGap * 2.6)
-      ctx.lineTo(playheadX, staffTop + staffH + lineGap * 0.8)
+      ctx.moveTo(playheadX, barTop)
+      ctx.lineTo(playheadX, barBot)
       ctx.stroke()
       ctx.fillStyle = 'rgba(0, 240, 255, 0.75)'
       ctx.font = '500 11px "Share Tech Mono", monospace'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'bottom'
-      ctx.fillText('NOW', playheadX, staffTop - lineGap * 2.6 - 4)
+      ctx.fillText('NOW', playheadX, barTop - 4)
 
       const t0 = t - 0.2
       const t1 = t + ahead
@@ -154,7 +163,7 @@ export function NotationView({ notes, currentTime, hitFlash, lookAheadSec = 3.2 
       ctx.font = '500 12px "Share Tech Mono", monospace'
       ctx.textAlign = 'left'
       ctx.textBaseline = 'alphabetic'
-      ctx.fillText('Kick in the bottom space · snare in the middle · cymbals above the staff', marginL, h - 18)
+      ctx.fillText('Kick in the bottom space · snare above the middle · hi-hat on the top line', marginL, h - 16)
     }
 
     let raf = 0

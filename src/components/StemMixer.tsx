@@ -99,7 +99,7 @@ export function StemMixer({
         {selected &&
         (pickedStems.includes('guitar') || pickedStems.includes('piano')) &&
         !selected.stems.includes('guitar') ? (
-          <p className="mixer__hint">Guitar and piano are selected, so the split uses HT Demucs 6-stem.</p>
+          <p className="mixer__hint">Guitar and piano are split in a second pass, then pulled out of Other.</p>
         ) : null}
       </label>
 
@@ -121,7 +121,7 @@ export function StemMixer({
                     ? 'Drums stay on so the chart can be rebuilt'
                     : supported
                       ? STEM_LABELS[id]
-                      : 'Uses the 6-stem model'
+                      : 'Split in a second pass, then removed from Other'
                 }
                 onClick={() => onToggleStem(id)}
               >

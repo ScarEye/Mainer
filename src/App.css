@@ -425,6 +425,13 @@ input {
   height: 100%;
 }
 
+.notation-view {
+  flex: 1 1 auto;
+  flex-basis: 520px;
+  min-height: 420px;
+  max-height: 560px;
+}
+
 .kit-view {
   flex: 0 0 auto;
   border-radius: 8px;

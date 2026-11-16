@@ -3,7 +3,6 @@ import { cancelSeparate, fetchSeparateHealth, separateStems, SplitCancelled } fr
 import { fetchYoutubeTrack } from './api/youtube'
 import { analyzeDrumChart } from './audio/analyze'
 import { analyzePitchChart, mergePitchNotes, shiftPitchNotes } from './audio/analyzePitch'
-import { reclaimBass } from './audio/refineStems'
 import { AudioEngine } from './audio/engine'
 import { MicDetector } from './audio/micDetector'
 import { placeStem, sliceBuffer } from './audio/placeStem'
@@ -85,13 +84,13 @@ function visualTip(mode: VisualMode, instrument: VisualInstrument): string {
     return 'Guitar is written an octave higher than it sounds. Notes sit on the treble staff and move in from the right.'
   }
   if (mode === 'notation' && instrument === 'bass') {
-    return 'Bass uses the bass staff. A very low part is written up an octave and marked 8vb.'
+    return 'Bass uses the bass staff. A very low part is written up an octave so the notes stay on the five lines.'
   }
   if (mode === 'notation' && instrument === 'piano') {
     return 'Piano uses the grand staff, treble above bass. Notes move in from the right.'
   }
   if (mode === 'notation') {
-    return 'Kick sits in the bottom space, snare in the middle, cymbals above the staff. Notes move in from the right.'
+    return 'Kick is in the bottom space, snare just above the middle, toms in the top space. Hi-hat is on the top line, ride and crash sit just above it.'
   }
   if (instrument === 'drums') return 'The kit piece lights up as the hit arrives.'
   if (instrument === 'piano') return 'The piano key lights up as the note arrives.'
@@ -417,13 +416,8 @@ export default function App() {
   const onSplitStems = async () => {
     const source = sourceBuffer
     if (!source || splitting || !device) return
-    let model = modelById(modelId)
-    const wantsLead = pickedStems.includes('guitar') || pickedStems.includes('piano')
-    if (wantsLead && !model.stems.includes('guitar')) {
-      model = modelById('htdemucs_6s')
-      setModelId(model.id)
-    }
-    const stems = STEM_IDS.filter((id) => id === 'drums' || (pickedStems.includes(id) && model.stems.includes(id)))
+    const model = modelById(modelId)
+    const stems = STEM_IDS.filter((id) => id === 'drums' || pickedStems.includes(id))
     const loopOk =
       loopStart != null && loopEnd != null && Math.abs(loopEnd - loopStart) >= 0.25
     if (splitRange === 'loop' && !loopOk) {
@@ -470,11 +464,6 @@ export default function App() {
         if (!bytes) throw new Error(`Missing stem: ${id}`)
         decoded[id] = await ctx.decodeAudioData(bytes.slice(0))
       }
-      if (stopped()) return
-      setSplitProgress((prev) =>
-        mergeProgress(prev, progress('Splitting stems', 'Pulling bass out of guitar and other…', 94)),
-      )
-      await reclaimBass(decoded)
       if (stopped()) return
       const drumSlice = decoded.drums
       if (!drumSlice) throw new Error('Missing drum stem.')
@@ -580,11 +569,6 @@ export default function App() {
 
   const onToggleStem = (id: StemId) => {
     if (id === 'drums') return
-    if (!modelById(modelId).stems.includes(id)) {
-      setModelId('htdemucs_6s')
-      setPickedStems((prev) => STEM_IDS.filter((stem) => stem === 'drums' || stem === id || prev.includes(stem)))
-      return
-    }
     setPickedStems((prev) =>
       prev.includes(id) ? prev.filter((stem) => stem !== id) : STEM_IDS.filter((stem) => stem === id || prev.includes(stem)),
     )

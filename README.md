@@ -6,7 +6,7 @@ Upload any audio track — or paste a YouTube link — and practice drums with s
 
 - 6 drum lanes: kick, snare, tom, hi-hat, crash, ride
 - YouTube fetch via local **yt-dlp**
-- **Split stems**: pick a Demucs model, Fast / Balanced / Best, CPU or GPU, and the full song or the current loop. 6-stem models add guitar and piano.
+- **Split stems**: pick a Demucs model, Fast / Balanced / Best, CPU or GPU, and the full song or the current loop. Every model separates drums, bass, vocals, guitar, and piano. The 6-stem model does that in one pass. The others add guitar and piano with a second pass.
 - **GPU or CPU** stem split. First launch installs a CUDA build when `nvidia-smi` works.
 - Slow-down, A/B loop, mic scoring, chart editor
 

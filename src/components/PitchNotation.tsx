@@ -3,7 +3,7 @@ import type { MelodicInstrument, PitchNote } from '../types/chart'
 import {
   isSharp,
   midiToName,
-  octaveMark,
+  octaveWords,
   pitchColor,
   staffOctaveShift,
   staffStep,
@@ -25,8 +25,12 @@ function yForStep(top: number, lineGap: number, step: number) {
 }
 
 function drawStaff(ctx: CanvasRenderingContext2D, left: number, right: number, top: number, lineGap: number) {
-  ctx.strokeStyle = 'rgba(232,220,200,0.4)'
-  ctx.lineWidth = 1.5
+  ctx.strokeStyle = 'rgba(232,220,200,0.82)'
+  ctx.lineWidth = 1.6
+  ctx.beginPath()
+  ctx.moveTo(left, top)
+  ctx.lineTo(left, top + lineGap * 4)
+  ctx.stroke()
   for (let i = 0; i < 5; i++) {
     const y = top + i * lineGap
     ctx.beginPath()
@@ -53,16 +57,16 @@ function drawTrebleClef(ctx: CanvasRenderingContext2D, x: number, staffTop: numb
 function drawBassClef(ctx: CanvasRenderingContext2D, x: number, staffTop: number, gap: number) {
   const f = staffTop + gap
   ctx.save()
-  ctx.strokeStyle = 'rgba(232,220,200,0.92)'
-  ctx.fillStyle = 'rgba(232,220,200,0.92)'
+  ctx.strokeStyle = 'rgba(232,220,200,0.95)'
+  ctx.fillStyle = 'rgba(232,220,200,0.95)'
   ctx.lineCap = 'round'
-  ctx.lineWidth = Math.max(1.7, gap * 0.13)
+  ctx.lineWidth = Math.max(1.8, gap * 0.15)
   ctx.beginPath()
-  ctx.arc(x - gap * 0.15, f + gap * 0.15, gap * 0.95, Math.PI * 1.15, Math.PI * 0.15, true)
+  ctx.arc(x, f, gap * 1.05, Math.PI * 0.28, Math.PI * 1.72, false)
   ctx.stroke()
   ctx.beginPath()
-  ctx.arc(x + gap * 0.72, f - gap * 0.42, gap * 0.13, 0, Math.PI * 2)
-  ctx.arc(x + gap * 0.72, f + gap * 0.42, gap * 0.13, 0, Math.PI * 2)
+  ctx.arc(x + gap * 1.22, f - gap * 0.5, gap * 0.12, 0, Math.PI * 2)
+  ctx.arc(x + gap * 1.22, f + gap * 0.5, gap * 0.12, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 }
@@ -75,7 +79,7 @@ function drawLedgers(
   step: number,
 ) {
   if (step <= 8 && step >= 0) return
-  ctx.strokeStyle = 'rgba(232,220,200,0.5)'
+  ctx.strokeStyle = 'rgba(232,220,200,0.72)'
   ctx.lineWidth = 1.35
   const half = Math.max(11, lineGap * 0.95)
   if (step > 8) {
@@ -125,13 +129,15 @@ export function PitchNotation({ instrument, notes, currentTime, lookAheadSec = 3
       ctx.fillRect(0, 0, w, h)
 
       const grand = inst === 'piano'
-      const marginL = 36
+      const marginL = grand ? 36 : 28
       const marginR = 28
-      const lineGap = Math.max(18, Math.min(grand ? 30 : 36, (h - 160) / (grand ? 16 : 12)))
+      const lineGap = Math.max(16, Math.min(grand ? 28 : 42, (h - (grand ? 96 : 56)) / (grand ? 14 : 9)))
       const staffBlock = lineGap * 4
-      const gapBetween = lineGap * 3
+      const gapBetween = lineGap * 2.6
       const blockH = grand ? staffBlock * 2 + gapBetween : staffBlock
-      const staffTop = Math.max(lineGap * 2.8, (h - blockH) / 2 - lineGap * 0.4)
+      const staffTop = grand
+        ? Math.max(lineGap * 2.2, (h - blockH) / 2 - lineGap * 0.15)
+        : lineGap * 1.85
       const bassTop = staffTop + staffBlock + gapBetween
       const playheadX = marginL + lineGap * 5.5
       const pxPerSec = (w - playheadX - marginR) / ahead
@@ -161,15 +167,6 @@ export function PitchNotation({ instrument, notes, currentTime, lookAheadSec = 3
         drawBassClef(ctx, marginL + lineGap * 1.15, staffTop, lineGap)
       } else {
         drawTrebleClef(ctx, marginL + lineGap * 1.15, staffTop, lineGap)
-      }
-
-      ctx.fillStyle = 'rgba(232,220,200,0.8)'
-      ctx.font = `700 ${Math.round(lineGap * 0.72)}px "Share Tech Mono", monospace`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'top'
-      if (!grand) {
-        const mark = inst === 'guitar' ? octaveMark(writtenOctavesAbove('guitar', trebleShift)) : octaveMark(bassShift)
-        if (mark) ctx.fillText(mark, marginL + lineGap * 1.15, staffTop + staffBlock + 8)
       }
 
       ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)'
@@ -207,8 +204,8 @@ export function PitchNotation({ instrument, notes, currentTime, lookAheadSec = 3
         const x = playheadX + (item.note.t - t) * pxPerSec + column * lineGap * 1.15
         const y = yForStep(top, lineGap, item.step)
         const color = pitchColor(item.note.midi)
-        const headRx = Math.max(7, lineGap * 0.48)
-        const headRy = Math.max(5, lineGap * 0.34)
+        const headRx = Math.max(7, lineGap * 0.62)
+        const headRy = Math.max(5, lineGap * 0.46)
         ctx.globalAlpha = item.note.t < t ? Math.max(0.25, 1 - (t - item.note.t) / 0.2) : 1
         drawLedgers(ctx, x, top, lineGap, item.step)
         ctx.strokeStyle = color
@@ -237,9 +234,9 @@ export function PitchNotation({ instrument, notes, currentTime, lookAheadSec = 3
       ctx.font = '500 12px "Share Tech Mono", monospace'
       ctx.textAlign = 'left'
       ctx.textBaseline = 'alphabetic'
-      const guitarMark = inst === 'guitar' ? octaveMark(writtenOctavesAbove('guitar', trebleShift)) : null
-      const bassMark = inst === 'bass' ? octaveMark(bassShift) : null
-      const markNote = guitarMark ? ` · written ${guitarMark}` : bassMark ? ` · written ${bassMark}` : ''
+      const guitarWords = inst === 'guitar' ? octaveWords(writtenOctavesAbove('guitar', trebleShift)) : null
+      const bassWords = inst === 'bass' ? octaveWords(bassShift) : null
+      const markNote = guitarWords ? ` · sounds ${guitarWords}` : bassWords ? ` · sounds ${bassWords}` : ''
       ctx.fillText(
         upcoming
           ? `${inst} · next ${midiToName(upcoming.midi)}${markNote}`

@@ -73,23 +73,30 @@ export function writtenMidi(midi: number, instrument: MelodicInstrument): number
 }
 
 /**
- * Octaves to add so the median note sits on the staff.
+ * Octaves to add so as many notes as possible sit on the five-line staff.
  * Positive writes the part higher than the pitches passed in.
+ * One octave is seven staff positions, so notes stay on lines and spaces.
  */
 export function staffOctaveShift(midis: number[], clef: 'treble' | 'bass'): number {
   if (!midis.length) return 0
-  const steps = midis.map((midi) => staffStep(midi, clef)).sort((a, b) => a - b)
-  let placed = steps[Math.floor(steps.length / 2)]!
-  let shift = 0
-  while (placed > 10 && shift > -2) {
-    shift -= 1
-    placed -= 7
+  const steps = midis.map((midi) => staffStep(midi, clef))
+  let best = 0
+  let bestScore = -Infinity
+  for (let shift = -2; shift <= 2; shift++) {
+    let onStaff = 0
+    let distance = 0
+    for (const step of steps) {
+      const placed = step + shift * 7
+      if (placed >= -2 && placed <= 10) onStaff += 1
+      distance += Math.abs(placed - 4)
+    }
+    const score = onStaff * 100 - distance
+    if (score > bestScore) {
+      bestScore = score
+      best = shift
+    }
   }
-  while (placed < -1 && shift < 2) {
-    shift += 1
-    placed += 7
-  }
-  return shift
+  return best
 }
 
 /** Octaves the written note sits above the sounding pitch. Guitar starts at +1. */
@@ -102,5 +109,13 @@ export function octaveMark(octavesAbove: number): string | null {
   if (octavesAbove >= 2) return '15mb'
   if (octavesAbove === -1) return '8va'
   if (octavesAbove <= -2) return '15ma'
+  return null
+}
+
+export function octaveWords(octavesAbove: number): string | null {
+  if (octavesAbove === 1) return 'one octave lower'
+  if (octavesAbove >= 2) return 'two octaves lower'
+  if (octavesAbove === -1) return 'one octave higher'
+  if (octavesAbove <= -2) return 'two octaves higher'
   return null
 }

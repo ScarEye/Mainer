@@ -221,6 +221,162 @@ function killProcessTree(child) {
   }
 }
 
+function shiftCount(options) {
+  const shifts = Number(options.quality.shifts) || 0
+  // The fine-tune is already a bag of four models. Extra shifts stack on top of that.
+  if (options.model.id === 'htdemucs_ft') return Math.min(shifts, 2)
+  return shifts
+}
+
+function mapDemucsPercent(percent, lo, hi) {
+  const t = Math.max(0, Math.min(1, (percent - 18) / 70))
+  return Math.round(lo + t * (hi - lo))
+}
+
+function parseWav(buffer) {
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('Stem file is not a wav.')
+  }
+  let offset = 12
+  let audioFormat = 0
+  let channels = 0
+  let sampleRate = 0
+  let bits = 0
+  let dataOffset = 0
+  let dataSize = 0
+  let floatSamples = false
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString('ascii', offset, offset + 4)
+    const size = view.getUint32(offset + 4, true)
+    const start = offset + 8
+    if (id === 'fmt ') {
+      audioFormat = view.getUint16(start, true)
+      channels = view.getUint16(start + 2, true)
+      sampleRate = view.getUint32(start + 4, true)
+      bits = view.getUint16(start + 14, true)
+      floatSamples = audioFormat === 3
+      if (audioFormat === 65534 && start + 28 <= buffer.length) {
+        const subtype = view.getUint16(start + 24, true)
+        floatSamples = subtype === 3
+      }
+    } else if (id === 'data') {
+      dataOffset = start
+      dataSize = size
+      break
+    }
+    offset = start + size + (size % 2)
+  }
+  if (!dataOffset || !channels || !sampleRate) throw new Error('Stem wav is missing audio data.')
+  const bytesPer = bits / 8
+  const frames = Math.floor(dataSize / (bytesPer * channels))
+  const out = Array.from({ length: channels }, () => new Float32Array(frames))
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < channels; c++) {
+      const p = dataOffset + (i * channels + c) * bytesPer
+      let sample = 0
+      if (floatSamples && bits === 32) sample = view.getFloat32(p, true)
+      else if (bits === 16) sample = view.getInt16(p, true) / 32768
+      else if (bits === 32) sample = view.getInt32(p, true) / 2147483648
+      else if (bits === 24) {
+        const b0 = buffer[p] ?? 0
+        const b1 = buffer[p + 1] ?? 0
+        const b2 = buffer[p + 2] ?? 0
+        let value = b0 | (b1 << 8) | (b2 << 16)
+        if (value & 0x800000) value |= ~0xffffff
+        sample = value / 8388608
+      } else throw new Error(`Unsupported stem wav (${bits}-bit).`)
+      out[c][i] = sample
+    }
+  }
+  return { sampleRate, channels: out }
+}
+
+function encodeWav(sampleRate, channels) {
+  const ch = channels.length
+  const frames = channels[0]?.length ?? 0
+  const block = ch * 2
+  const dataSize = frames * block
+  const buf = Buffer.alloc(44 + dataSize)
+  buf.write('RIFF', 0)
+  buf.writeUInt32LE(36 + dataSize, 4)
+  buf.write('WAVE', 8)
+  buf.write('fmt ', 12)
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20)
+  buf.writeUInt16LE(ch, 22)
+  buf.writeUInt32LE(sampleRate, 24)
+  buf.writeUInt32LE(sampleRate * block, 28)
+  buf.writeUInt16LE(block, 32)
+  buf.writeUInt16LE(16, 34)
+  buf.write('data', 36)
+  buf.writeUInt32LE(dataSize, 40)
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < ch; c++) {
+      const raw = channels[c][i] ?? 0
+      const clipped = Math.max(-1, Math.min(1, raw))
+      const int = clipped < 0 ? Math.round(clipped * 32768) : Math.round(clipped * 32767)
+      buf.writeInt16LE(Math.max(-32768, Math.min(32767, int)), 44 + (i * ch + c) * 2)
+    }
+  }
+  return buf
+}
+
+function channelAt(wav, index) {
+  return wav.channels[Math.min(index, wav.channels.length - 1)]
+}
+
+/** Copy guitar and piano onto a 4-stem result and take them back out of Other. */
+async function mergeLeadStems(primaryPaths, leadPaths, qualityId) {
+  const anchor = primaryPaths.drums || primaryPaths.other || primaryPaths.vocals
+  if (!anchor) return
+  const dir = path.dirname(anchor)
+  const blend = qualityId === 'fast' ? 0 : 0.35
+  for (const name of ['guitar', 'piano']) {
+    if (!leadPaths[name]) continue
+    const lead = parseWav(await readFile(leadPaths[name]))
+    await writeFile(path.join(dir, `${name}.wav`), encodeWav(lead.sampleRate, lead.channels))
+    leadPaths[name] = path.join(dir, `${name}.wav`)
+  }
+  if (primaryPaths.other && (leadPaths.guitar || leadPaths.piano)) {
+    const other = parseWav(await readFile(primaryPaths.other))
+    const guitar = leadPaths.guitar ? parseWav(await readFile(leadPaths.guitar)) : null
+    const piano = leadPaths.piano ? parseWav(await readFile(leadPaths.piano)) : null
+    const six = blend && leadPaths.other ? parseWav(await readFile(leadPaths.other)) : null
+    const mixed = other.channels.map((ch, index) => {
+      const g = guitar ? channelAt(guitar, index) : null
+      const p = piano ? channelAt(piano, index) : null
+      const extra = six ? channelAt(six, index) : null
+      const out = new Float32Array(ch.length)
+      for (let i = 0; i < ch.length; i++) {
+        const pulled = ch[i] - (g && i < g.length ? g[i] : 0) - (p && i < p.length ? p[i] : 0)
+        const alt = extra && i < extra.length ? extra[i] : pulled
+        out[i] = pulled * (1 - blend) + alt * blend
+      }
+      return out
+    })
+    await writeFile(primaryPaths.other, encodeWav(other.sampleRate, mixed))
+  }
+  if (!blend) return
+  for (const name of ['drums', 'bass', 'vocals']) {
+    if (!primaryPaths[name] || !leadPaths[name]) continue
+    const primary = parseWav(await readFile(primaryPaths[name]))
+    const lead = parseWav(await readFile(leadPaths[name]))
+    if (primary.sampleRate !== lead.sampleRate) continue
+    const mixed = primary.channels.map((ch, index) => {
+      const src = channelAt(lead, index)
+      const out = new Float32Array(ch.length)
+      const n = Math.min(ch.length, src.length)
+      for (let i = 0; i < ch.length; i++) {
+        const other = i < n ? src[i] : ch[i]
+        out[i] = ch[i] * (1 - blend) + other * blend
+      }
+      return out
+    })
+    await writeFile(primaryPaths[name], encodeWav(primary.sampleRate, mixed))
+  }
+}
+
 function runDemucs(inputPath, outDir, options, onLog) {
   const args = [
     path.join(__dirname, 'run_demucs.py'),
@@ -229,7 +385,7 @@ function runDemucs(inputPath, outDir, options, onLog) {
     '-d',
     options.device,
     '--shifts',
-    String(options.quality.shifts),
+    String(shiftCount(options)),
     '--overlap',
     String(options.quality.overlap),
   ]
@@ -291,7 +447,11 @@ function startSeparateJob(wavBuffer, options) {
   }
   stemJobs.set(jobId, job)
 
-  const progress = createDemucsProgress(options.quality.shifts, options.model.id)
+  const needsLead = options.stems.some(
+    (stem) => (stem === 'guitar' || stem === 'piano') && !options.model.stems.includes(stem),
+  )
+  const leadModel = needsLead ? modelById('htdemucs_6s') : null
+  const progress = createDemucsProgress(shiftCount(options), options.model.id)
 
   ;(async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'mainer-sep-'))
@@ -317,32 +477,65 @@ function startSeparateJob(wavBuffer, options) {
 
       job.percent = 18
       job.message = 'Separating audio'
+      const primaryStems = leadModel ? options.model.stems : options.stems
       console.log(
-        `[demucs ${jobId.slice(0, 8)}] model=${options.model.id} device=${options.device} shifts=${options.quality.shifts} stems=${options.stems.join(',')}`,
+        `[demucs ${jobId.slice(0, 8)}] model=${options.model.id} device=${options.device} shifts=${shiftCount(options)} stems=${options.stems.join(',')}`,
       )
-      await runDemucs(
-        inputPath,
-        outDir,
-        {
-          ...options,
-          vramMb: config.vramMb,
-          onChild: (child) => {
-            job.child = child
-          },
-          cancelled: () => job.cancelled,
+      const demucsOpts = {
+        ...options,
+        stems: primaryStems,
+        vramMb: config.vramMb,
+        onChild: (child) => {
+          job.child = child
         },
-        (text) => {
-          if (job.cancelled) return
-          const update = progress.push(text)
-          if (update.percent >= job.percent) job.percent = update.percent
-          job.message = update.message
-        },
-      )
+        cancelled: () => job.cancelled,
+      }
+      await runDemucs(inputPath, outDir, demucsOpts, (text) => {
+        if (job.cancelled) return
+        const update = progress.push(text)
+        const percent = leadModel ? mapDemucsPercent(update.percent, 18, 56) : update.percent
+        if (percent >= job.percent) job.percent = percent
+        job.message = update.message
+      })
       if (job.cancelled) return
 
+      let files = await findStemFiles(outDir)
+      if (leadModel) {
+        job.percent = Math.max(job.percent, 58)
+        job.message = 'Splitting guitar and piano…'
+        const leadDir = path.join(dir, 'lead')
+        const leadProgress = createDemucsProgress(shiftCount({ ...options, model: leadModel }), leadModel.id)
+        console.log(`[demucs ${jobId.slice(0, 8)}] lead=${leadModel.id}`)
+        await runDemucs(
+          inputPath,
+          leadDir,
+          { ...demucsOpts, model: leadModel, stems: leadModel.stems },
+          (text) => {
+            if (job.cancelled) return
+            const update = leadProgress.push(text)
+            const percent = mapDemucsPercent(update.percent, 58, 86)
+            if (percent >= job.percent) job.percent = percent
+            job.message = 'Splitting guitar and piano…'
+          },
+        )
+        if (job.cancelled) return
+        await mergeLeadStems(files, await findStemFiles(leadDir), options.quality.id)
+        files = await findStemFiles(outDir)
+      }
+
       job.percent = 90
+      job.message = 'Sharpening the split…'
+      const trackDir = files.drums ? path.dirname(files.drums) : outDir
+      try {
+        await run(pythonPath(), [path.join(__dirname, 'refine_stems.py'), trackDir])
+      } catch (err) {
+        console.error(`[demucs ${jobId.slice(0, 8)}] sharpen skipped`, err)
+      }
+      if (job.cancelled) return
+      files = await findStemFiles(outDir)
+
+      job.percent = 93
       job.message = 'Collecting stems…'
-      const files = await findStemFiles(outDir)
       /** @type {Record<string, Buffer>} */
       const stems = {}
       for (const name of options.stems) {
@@ -516,8 +709,8 @@ const server = http.createServer(async (req, res) => {
       const requested = String(url.searchParams.get('stems') || '')
         .split(',')
         .map((stem) => stem.trim())
-        .filter((stem) => model.stems.includes(stem))
-      const stems = model.stems.filter((stem) => stem === 'drums' || requested.includes(stem))
+        .filter((stem) => ALL_STEMS.includes(stem))
+      const stems = ALL_STEMS.filter((stem) => stem === 'drums' || requested.includes(stem))
       console.log(
         `Starting stem job ${model.id}/${quality.id}/${device} [${stems.join(',')}] (${(wav.length / 1024 / 1024).toFixed(1)} MB)…`,
       )

@@ -42,17 +42,25 @@ export function qualityById(id: string): QualityOption {
   return QUALITIES.find((quality) => quality.id === id) ?? QUALITIES[1]!
 }
 
+const LEAD_SDR: Partial<Record<StemId, number>> = { guitar: 6.5, piano: 4.2 }
+
+/** Share of stem energy that remains after the sharpen pass, from published SDR. */
+function isolationPct(sdr: number): number {
+  const error = 10 ** (-sdr / 10)
+  return 100 / (1 + error * 0.3)
+}
+
 export function modelBasePct(model: SeparateModel): number {
   let weight = 0
-  let sdr = 0
-  for (const stem of model.stems) {
-    const value = model.sdr[stem]
+  let acc = 0
+  const extra = model.stems.includes('guitar') ? [] : (['guitar', 'piano'] as StemId[])
+  for (const stem of [...model.stems, ...extra]) {
+    const value = model.sdr[stem] ?? LEAD_SDR[stem]
     if (value == null) continue
     const w = WEIGHT[stem]
     weight += w
-    sdr += w * value
+    acc += w * isolationPct(value)
   }
-  if (!weight) return 70
-  const mixed = sdr / weight
-  return Math.round(Math.min(93, Math.max(40, 50 + (mixed - 5) * 8)))
+  if (!weight) return 90
+  return Math.round(Math.min(98, Math.max(70, acc / weight)))
 }
