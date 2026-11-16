@@ -53,13 +53,11 @@ input {
 }
 
 .app {
-  height: 100%;
-  max-height: 100dvh;
-  min-height: 0;
+  min-height: 100dvh;
+  height: auto;
   display: flex;
   flex-direction: column;
   position: relative;
-  overflow: hidden;
 }
 
 .app::before {
@@ -328,13 +326,14 @@ input {
 }
 
 .studio {
-  flex: 1;
+  flex: 1 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) min(400px, 36vw);
+  grid-template-columns: minmax(0, 1fr) min(440px, 38vw);
   gap: 0.75rem;
-  padding: 0.55rem 1rem 0.6rem;
-  min-height: 0;
-  overflow: hidden;
+  padding: 0.55rem 1rem 1rem;
+  min-height: calc(100dvh - 4.2rem);
+  overflow: visible;
+  align-items: start;
 }
 
 .studio__stage {
@@ -342,9 +341,8 @@ input {
   flex-direction: column;
   gap: 0.4rem;
   min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: auto;
+  height: auto;
+  overflow: visible;
 }
 
 .track-meta__row {
@@ -412,8 +410,8 @@ input {
 }
 
 .highway {
-  flex: 1 1 780px;
-  min-height: 780px;
+  flex: 1 1 960px;
+  min-height: 960px;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -428,8 +426,7 @@ input {
 }
 
 .kit-view {
-  flex: 1 1 780px;
-  min-height: 780px;
+  flex: 0 0 auto;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -440,10 +437,10 @@ input {
 }
 
 .kit-view__svg {
-  flex: 1 1 auto;
+  display: block;
   width: 100%;
-  min-height: 0;
-  height: 100%;
+  height: auto;
+  max-height: 520px;
 }
 
 .kit-view__cue {
@@ -499,11 +496,7 @@ input {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.55rem;
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  padding: 0.35rem 0 0.1rem;
-  background: linear-gradient(180deg, rgba(10, 10, 15, 0), rgba(10, 10, 15, 0.96) 28%);
+  padding: 0.15rem 0 0.1rem;
 }
 
 .btn {
@@ -596,10 +589,9 @@ input {
 
 .studio__side {
   min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
+  min-height: calc(100dvh - 5rem);
+  height: auto;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -820,7 +812,42 @@ input {
   gap: 0.4rem;
 }
 
-.mixer__list.is-disabled {
+.mixer__pick,
+.mixer__name {
+  margin-right: auto;
+  font-weight: 600;
+}
+
+.mixer__pick {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.12rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mixer__pick:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: rgba(0, 240, 255, 0.35);
+}
+
+.mixer__pick.is-shown {
+  color: var(--primary);
+  border-color: rgba(0, 240, 255, 0.55);
+  background: rgba(0, 240, 255, 0.1);
+}
+
+.mixer__pick:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+
+.mixer__list.is-disabled .mixer__row input,
+.mixer__list.is-disabled .mixer__actions .btn {
   opacity: 0.45;
 }
 
@@ -864,9 +891,29 @@ input {
 }
 
 .editor {
-  flex: 0 0 auto;
-  min-height: 520px;
+  flex: 1 1 980px;
+  min-height: 980px;
   overflow: hidden;
+}
+
+.visual-empty {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.visual-empty strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--primary);
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+}
+
+.visual-empty p {
+  margin: 0;
 }
 
 .editor__scroll {
@@ -983,10 +1030,14 @@ input {
     overflow: visible;
   }
 
-  .highway,
+  .highway {
+    flex-basis: 560px;
+    min-height: 560px;
+  }
+
   .kit-view {
-    flex-basis: 420px;
-    min-height: 420px;
+    flex-basis: auto;
+    min-height: 0;
   }
 
   .mixer {
@@ -994,7 +1045,8 @@ input {
   }
 
   .editor {
-    min-height: 420px;
+    min-height: 720px;
+    flex-basis: 720px;
   }
 
   .top {

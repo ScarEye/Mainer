@@ -52,6 +52,23 @@ export const VISUAL_MODES: { id: VisualMode; label: string }[] = [
   { id: 'kit', label: 'Kit' },
 ]
 
+/** Stems that can drive the practice view. Vocals and Other stay in the mix only. */
+export type VisualInstrument = 'drums' | 'bass' | 'guitar' | 'piano'
+
+export type MelodicInstrument = Exclude<VisualInstrument, 'drums'>
+
+export function isVisualInstrument(id: StemId): id is VisualInstrument {
+  return id === 'drums' || id === 'bass' || id === 'guitar' || id === 'piano'
+}
+
+export type PitchNote = {
+  id: string
+  t: number
+  midi: number
+  dur: number
+  vel: number
+}
+
 export function createNoteId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }

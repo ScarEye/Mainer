@@ -40,14 +40,14 @@ export function ChartEditor({ notes, currentTime, selectedId, onSelect, onChange
 
   const nearby = notes
     .map((n) => ({ n, d: Math.abs(n.t - currentTime) }))
-    .filter((x) => x.d < 2)
+    .filter((x) => x.d < 4)
     .sort((a, b) => a.d - b.d)
-    .slice(0, 14)
+    .slice(0, 36)
 
   return (
     <div className="editor">
       <div className="editor__head">
-        <h3>Chart editor</h3>
+        <h3>Drums chart</h3>
         <span>{notes.length} notes</span>
       </div>
 

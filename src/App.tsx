@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cancelSeparate, fetchSeparateHealth, separateStems, SplitCancelled } from './api/separate'
 import { fetchYoutubeTrack } from './api/youtube'
 import { analyzeDrumChart } from './audio/analyze'
+import { analyzePitchChart, mergePitchNotes, shiftPitchNotes } from './audio/analyzePitch'
+import { reclaimBass } from './audio/refineStems'
 import { AudioEngine } from './audio/engine'
 import { MicDetector } from './audio/micDetector'
 import { placeStem, sliceBuffer } from './audio/placeStem'
 import { estimateSplitAccuracy, measureSplitAccuracy } from './audio/separateScore'
 import { encodeWav } from './audio/wav'
 import { ChartEditor } from './components/ChartEditor'
+import { PitchEditor } from './components/PitchEditor'
 import { PracticeVisual } from './components/PracticeVisual'
 import { ProgressCard } from './components/ProgressCard'
 import { StemMixer } from './components/StemMixer'
@@ -17,8 +20,8 @@ import { WaveformScrub } from './components/WaveformScrub'
 import { YoutubeImport } from './components/YoutubeImport'
 import { modelById, type DeviceChoice, type QualityId, type SplitRange } from './separate/models'
 import { SEPARATE_MODELS } from './separate/models'
-import type { ChartNote, DrumChart, DrumLane, StemId, StemLevels, VisualMode } from './types/chart'
-import { STEM_IDS, defaultStemLevels } from './types/chart'
+import type { ChartNote, DrumChart, DrumLane, MelodicInstrument, PitchNote, StemId, StemLevels, VisualInstrument, VisualMode } from './types/chart'
+import { STEM_IDS, STEM_LABELS, defaultStemLevels } from './types/chart'
 import './App.css'
 
 type Score = {
@@ -137,10 +140,21 @@ export default function App() {
     const saved = localStorage.getItem('mainer.visualMode')
     return saved === 'notation' || saved === 'kit' || saved === 'digital' ? saved : 'digital'
   })
+  const [showInstrument, setShowInstrument] = useState<VisualInstrument>(() => {
+    const saved = localStorage.getItem('mainer.showInstrument')
+    return saved === 'bass' || saved === 'guitar' || saved === 'piano' ? saved : 'drums'
+  })
+  const [pitchCharts, setPitchCharts] = useState<Partial<Record<MelodicInstrument, PitchNote[]>>>({})
 
   const changeVisualMode = (mode: VisualMode) => {
     setVisualMode(mode)
     localStorage.setItem('mainer.visualMode', mode)
+  }
+
+  const showStem = (id: VisualInstrument) => {
+    setShowInstrument(id)
+    localStorage.setItem('mainer.showInstrument', id)
+    setSelectedId(null)
   }
 
   /** Seed judged set so past notes are not re-counted as misses after a reset. */
@@ -281,6 +295,7 @@ export default function App() {
     setStemsReady(false)
     setStemLevels(defaultStemLevels())
     setSplitRun(null)
+    setPitchCharts({})
     setDevice(null)
     setSplitRange('full')
     setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
@@ -416,6 +431,12 @@ export default function App() {
         if (!bytes) throw new Error(`Missing stem: ${id}`)
         decoded[id] = await ctx.decodeAudioData(bytes.slice(0))
       }
+      if (stopped()) return
+      setSplitProgress((prev) =>
+        mergeProgress(prev, progress('Splitting stems', 'Pulling bass out of guitar and other…', 94)),
+      )
+      await reclaimBass(decoded)
+      if (stopped()) return
       const drumSlice = decoded.drums
       if (!drumSlice) throw new Error('Missing drum stem.')
       const placed = {} as Partial<Record<StemId, AudioBuffer>>
@@ -444,6 +465,34 @@ export default function App() {
           })()
         : null
       if (stopped()) return
+      const pitched = {} as Partial<Record<MelodicInstrument, PitchNote[]>>
+      for (const id of ['bass', 'guitar', 'piano'] as const) {
+        if (!decoded[id]) continue
+        setSplitProgress((prev) =>
+          mergeProgress(prev, progress('Splitting stems', `Charting ${STEM_LABELS[id].toLowerCase()}…`, 98)),
+        )
+        const stem = decoded[id]
+        if (!stem) continue
+        try {
+          pitched[id] = shiftPitchNotes(await analyzePitchChart(stem, id), start)
+        } catch (err) {
+          console.error(err)
+          pitched[id] = []
+        }
+        if (stopped()) return
+      }
+      setPitchCharts((prev) => {
+        const next = { ...prev }
+        for (const id of ['bass', 'guitar', 'piano'] as const) {
+          if (!stems.includes(id)) {
+            if (!useLoop) delete next[id]
+            continue
+          }
+          const added = pitched[id] ?? []
+          next[id] = useLoop ? mergePitchNotes(prev[id], added, start, end) : added
+        }
+        return next
+      })
 
       await engineRef.current.loadStems(placed)
       setBuffer(placed.drums ?? source)
@@ -680,7 +729,11 @@ export default function App() {
                 <div>
                   <h1>{chart.title}</h1>
                   <p>
-                    ~{chart.bpm} BPM · {chart.notes.length} notes · 6 drum lanes · {formatTime(duration)}
+                    ~{chart.bpm} BPM ·{' '}
+                    {showInstrument === 'drums'
+                      ? `${chart.notes.length} drum notes`
+                      : `${pitchCharts[showInstrument]?.length ?? 0} ${STEM_LABELS[showInstrument].toLowerCase()} notes`}{' '}
+                    · {STEM_LABELS[showInstrument]} · {formatTime(duration)}
                     {stemsReady ? ' · stems ready' : ''}
                   </p>
                 </div>
@@ -689,14 +742,19 @@ export default function App() {
             </div>
             <PracticeVisual
               mode={visualMode}
+              instrument={showInstrument}
               notes={chart.notes}
+              pitchNotes={showInstrument === 'drums' ? null : (pitchCharts[showInstrument] ?? null)}
               currentTime={currentTime}
               hitFlash={hitFlash}
             />
             <p className="tip tip--visual">
-              {visualMode === 'digital' && 'Digital: notes fall down lanes to the HIT line.'}
-              {visualMode === 'notation' && 'Notation: drum staff — notes approach the NOW playhead from the right.'}
-              {visualMode === 'kit' && 'Kit: watch which drum lights up, then hit that piece.'}
+              {visualMode === 'digital' &&
+                `${STEM_LABELS[showInstrument]}: notes fall to the HIT line. Click a mix name to change instrument.`}
+              {visualMode === 'notation' &&
+                `${STEM_LABELS[showInstrument]}: staff notation — notes approach the NOW line from the right.`}
+              {visualMode === 'kit' &&
+                `${STEM_LABELS[showInstrument]}: the part lights up as the note arrives.`}
             </p>
             <WaveformScrub
               buffer={buffer}
@@ -779,14 +837,32 @@ export default function App() {
               onSplit={() => void onSplitStems()}
               onStop={onStopSplit}
               onResetMix={onResetMix}
+              showInstrument={showInstrument}
+              onShowInstrument={showStem}
             />
-            <ChartEditor
-              notes={chart.notes}
-              currentTime={currentTime}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              onChange={updateNotes}
-            />
+            {showInstrument === 'drums' ? (
+              <ChartEditor
+                notes={chart.notes}
+                currentTime={currentTime}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onChange={updateNotes}
+              />
+            ) : (
+              <PitchEditor
+                instrument={showInstrument}
+                notes={pitchCharts[showInstrument] ?? null}
+                currentTime={currentTime}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onChange={(notes) =>
+                  setPitchCharts((prev) => ({
+                    ...prev,
+                    [showInstrument]: notes,
+                  }))
+                }
+              />
+            )}
           </aside>
         </main>
       )}

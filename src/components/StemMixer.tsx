@@ -1,5 +1,5 @@
-import type { StemId, StemLevels } from '../types/chart'
-import { STEM_IDS, STEM_LABELS } from '../types/chart'
+import type { StemId, StemLevels, VisualInstrument } from '../types/chart'
+import { STEM_IDS, STEM_LABELS, isVisualInstrument } from '../types/chart'
 import type { DeviceChoice, QualityId, SeparateModel, SplitRange } from '../separate/models'
 import { QUALITIES } from '../separate/models'
 import { ProgressCard } from './ProgressCard'
@@ -32,6 +32,8 @@ type Props = {
   onSplit: () => void
   onStop: () => void
   onResetMix: () => void
+  showInstrument: VisualInstrument
+  onShowInstrument: (id: VisualInstrument) => void
 }
 
 export function StemMixer({
@@ -62,6 +64,8 @@ export function StemMixer({
   onSplit,
   onStop,
   onResetMix,
+  showInstrument,
+  onShowInstrument,
 }: Props) {
   const selected = models.find((model) => model.id === modelId) ?? models[0]
   const locked = splitting
@@ -247,7 +251,24 @@ export function StemMixer({
           return (
             <li key={id} className="mixer__row">
               <div className="mixer__label">
-                <span>{STEM_LABELS[id]}</span>
+                {isVisualInstrument(id) ? (
+                  <button
+                    type="button"
+                    className={`mixer__pick ${showInstrument === id ? 'is-shown' : ''}`}
+                    aria-pressed={showInstrument === id}
+                    disabled={id !== 'drums' && !ready}
+                    title={
+                      id !== 'drums' && !ready
+                        ? `Split stems to show ${STEM_LABELS[id]} notes`
+                        : `Show ${STEM_LABELS[id]} notes`
+                    }
+                    onClick={() => onShowInstrument(id)}
+                  >
+                    {STEM_LABELS[id]}
+                  </button>
+                ) : (
+                  <span className="mixer__name">{STEM_LABELS[id]}</span>
+                )}
                 <span className="mixer__vol">{Math.round(lvl.volume * 100)}%</span>
                 <div className="mixer__actions">
                   <button

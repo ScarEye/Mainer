@@ -222,7 +222,6 @@ function killProcessTree(child) {
 }
 
 function runDemucs(inputPath, outDir, options, onLog) {
-  const segment = options.device === 'cuda' && options.vramMb > 0 && options.vramMb < 5000 ? 6 : 7
   const args = [
     path.join(__dirname, 'run_demucs.py'),
     '-n',
@@ -233,9 +232,12 @@ function runDemucs(inputPath, outDir, options, onLog) {
     String(options.quality.shifts),
     '--overlap',
     String(options.quality.overlap),
-    '--segment',
-    String(segment),
   ]
+  // The model default chunk keeps bass and guitar from smearing across cuts.
+  // Only shrink it when the GPU is too small to hold that chunk.
+  if (options.device === 'cuda' && options.vramMb > 0 && options.vramMb < 5000) {
+    args.push('--segment', '6')
+  }
   if (options.stems.length === 1) {
     args.push('--two-stems', options.stems[0])
   }
