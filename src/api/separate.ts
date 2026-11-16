@@ -13,10 +13,23 @@ export type SeparateHealth = {
 
 export type SeparateStatus = {
   jobId: string
-  status: 'queued' | 'running' | 'done' | 'error'
+  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
   message: string
+  percent?: number
   error?: string
   stems?: StemId[]
+}
+
+export type SeparateUpdate = {
+  message: string
+  percent: number
+}
+
+export class SplitCancelled extends Error {
+  constructor() {
+    super('Stopped')
+    this.name = 'SplitCancelled'
+  }
 }
 
 export type SeparateOptions = {
@@ -39,7 +52,32 @@ export async function fetchSeparateHealth(): Promise<SeparateHealth> {
   }
 }
 
-async function pollJob(jobId: string, onProgress?: (message: string) => void): Promise<void> {
+function stripAnsi(text: string) {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) !== 27) {
+      out += text[i]
+      continue
+    }
+    if (text[i + 1] === '[') {
+      i += 2
+      while (i < text.length && text.charCodeAt(i) < 64) i++
+    }
+  }
+  return out
+}
+
+function cleanMessage(message: string) {
+  const text = stripAnsi(message).trim()
+  if (!text || text.includes('%|') || text.includes('#')) return 'Separating audio'
+  return text.length > 90 ? `${text.slice(0, 90)}…` : text
+}
+
+export async function cancelSeparate(jobId: string) {
+  await fetch(`/api/separate/${jobId}/cancel`, { method: 'POST' })
+}
+
+async function pollJob(jobId: string, onProgress?: (update: SeparateUpdate) => void): Promise<void> {
   while (true) {
     const res = await fetch(`/api/separate/${jobId}`)
     if (!res.ok) {
@@ -54,27 +92,33 @@ async function pollJob(jobId: string, onProgress?: (message: string) => void): P
     }
 
     const data = (await res.json()) as SeparateStatus
-    onProgress?.(data.message || data.status)
+    onProgress?.({
+      message: cleanMessage(data.message || data.status),
+      percent: typeof data.percent === 'number' ? data.percent : 20,
+    })
 
     if (data.status === 'done') return
+    if (data.status === 'cancelled') throw new SplitCancelled()
     if (data.status === 'error') {
       throw new Error(data.error || data.message || 'Stem separation failed.')
     }
 
-    await sleep(1500)
+    await sleep(700)
   }
 }
 
 export async function separateStems(
   wav: ArrayBuffer,
   options: SeparateOptions,
-  onProgress?: (message: string) => void,
+  onProgress?: (update: SeparateUpdate) => void,
+  onJob?: (jobId: string) => void,
 ): Promise<SeparatedStems> {
-  onProgress?.('Uploading audio…')
+  onProgress?.({ message: 'Uploading audio…', percent: 6 })
   const params = new URLSearchParams({
     model: options.model,
     quality: options.quality,
     device: options.device,
+    stems: options.stems.join(','),
   })
   const res = await fetch(`/api/separate?${params}`, {
     method: 'POST',
@@ -95,11 +139,12 @@ export async function separateStems(
 
   const payload = (await res.json()) as { jobId: string; message?: string }
   if (!payload.jobId) throw new Error('Helper did not return a job id. Restart Mainer.')
+  onJob?.(payload.jobId)
 
-  onProgress?.(payload.message || 'Separation started…')
+  onProgress?.({ message: 'Separating audio', percent: 12 })
   await pollJob(payload.jobId, onProgress)
 
-  onProgress?.('Downloading stem files…')
+  onProgress?.({ message: 'Downloading stems…', percent: 92 })
   const out: SeparatedStems = {}
   await Promise.all(
     options.stems.map(async (id) => {
@@ -108,6 +153,6 @@ export async function separateStems(
       out[id] = await stemRes.arrayBuffer()
     }),
   )
-  onProgress?.('Stems ready')
+  onProgress?.({ message: 'Stems ready', percent: 96 })
   return out
 }

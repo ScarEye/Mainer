@@ -74,7 +74,7 @@ export function KitView({
 
   return (
     <div className="kit-view">
-      <svg className="kit-view__svg" viewBox="0 0 1000 620" role="img" aria-label="Drum kit">
+      <svg className="kit-view__svg" viewBox="110 70 780 500" role="img" aria-label="Drum kit">
         <defs>
           <radialGradient id="kitFloor" cx="50%" cy="70%" r="55%">
             <stop offset="0%" stopColor="#12121a" />

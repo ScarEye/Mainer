@@ -77,8 +77,8 @@ export function NotationView({ notes, currentTime, hitFlash, lookAheadSec = 3.2 
 
       const marginL = 72
       const marginR = 24
-      const staffTop = h * 0.22
-      const lineGap = Math.min(18, h * 0.045)
+      const lineGap = Math.max(20, Math.min(32, h * 0.046))
+      const staffTop = Math.max(28, (h - lineGap * 4.6) * 0.38)
       const playheadX = marginL + 48
       const pxPerSec = (w - playheadX - marginR) / ahead
 
@@ -135,7 +135,7 @@ export function NotationView({ notes, currentTime, hitFlash, lookAheadSec = 3.2 
           ctx.shadowColor = LANE_COLORS[note.lane]
           ctx.shadowBlur = 14
         }
-        noteHead(ctx, x, y, note.lane, 7)
+        noteHead(ctx, x, y, note.lane, Math.max(8, lineGap * 0.42))
         ctx.shadowBlur = 0
         ctx.globalAlpha = 1
       }

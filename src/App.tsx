@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchSeparateHealth, separateStems } from './api/separate'
+import { cancelSeparate, fetchSeparateHealth, separateStems, SplitCancelled } from './api/separate'
 import { fetchYoutubeTrack } from './api/youtube'
 import { analyzeDrumChart } from './audio/analyze'
 import { AudioEngine } from './audio/engine'
@@ -46,6 +46,12 @@ type SplitRun = {
   stems: StemId[]
 }
 
+function sameStems(a: StemId[], b: StemId[]) {
+  if (a.length !== b.length) return false
+  const have = new Set(a)
+  return b.every((stem) => have.has(stem))
+}
+
 function runMatches(
   run: SplitRun | null,
   model: string,
@@ -53,8 +59,10 @@ function runMatches(
   range: SplitRange,
   loopStart: number | null,
   loopEnd: number | null,
+  picked: StemId[],
 ) {
   if (!run || run.model !== model || run.quality !== quality || run.range !== range) return false
+  if (!sameStems(run.stems, picked)) return false
   if (range === 'loop') return run.loopStart === loopStart && run.loopEnd === loopEnd
   return true
 }
@@ -85,27 +93,14 @@ function youtubePercent(detail: string) {
   return 14
 }
 
-function splitPercent(detail: string) {
-  const text = detail.toLowerCase()
-  if (text.includes('preparing audio')) return 8
-  if (text.includes('uploading audio')) return 16
-  if (text.includes('separation started')) return 22
-  if (text.includes('queued')) return 26
-  if (text.includes('saving audio')) return 32
-  if (text.includes('running demucs')) return 56
-  if (text.includes('collecting stem files')) return 78
-  if (text.includes('downloading stem files')) return 86
-  if (text.includes('decoding stems')) return 92
-  if (text.includes('rebuilding drum chart')) return 96
-  if (text.includes('stems ready')) return 100
-  return 60
-}
-
 export default function App() {
   const engineRef = useRef(new AudioEngine())
   const micRef = useRef(new MicDetector())
   const judgedRef = useRef(new Set<string>())
   const sessionGenRef = useRef(0)
+  const splitJobRef = useRef<string | null>(null)
+  const stopSplitRef = useRef(false)
+  const splitAttemptRef = useRef(0)
   const prevTimeRef = useRef(0)
   const flashTimersRef = useRef<Partial<Record<DrumLane, number>>>({})
 
@@ -131,6 +126,7 @@ export default function App() {
   const [splitting, setSplitting] = useState(false)
   const [splitProgress, setSplitProgress] = useState<ProgressState | null>(null)
   const [modelId, setModelId] = useState('htdemucs_6s')
+  const [pickedStems, setPickedStems] = useState<StemId[]>([...STEM_IDS])
   const [qualityId, setQualityId] = useState<QualityId>('balanced')
   const [device, setDevice] = useState<DeviceChoice | null>(null)
   const [splitRange, setSplitRange] = useState<SplitRange>('full')
@@ -360,10 +356,20 @@ export default function App() {
     }
   }
 
+  const onStopSplit = () => {
+    stopSplitRef.current = true
+    const id = splitJobRef.current
+    splitJobRef.current = null
+    if (id) void cancelSeparate(id)
+    setSplitting(false)
+    setSplitProgress(null)
+  }
+
   const onSplitStems = async () => {
     const source = sourceBuffer
     if (!source || splitting || !device) return
     const model = modelById(modelId)
+    const stems = STEM_IDS.filter((id) => id === 'drums' || (pickedStems.includes(id) && model.stems.includes(id)))
     const loopOk =
       loopStart != null && loopEnd != null && Math.abs(loopEnd - loopStart) >= 0.25
     if (splitRange === 'loop' && !loopOk) {
@@ -374,27 +380,38 @@ export default function App() {
     const start = useLoop ? Math.min(loopStart ?? 0, loopEnd ?? 0) : 0
     const end = useLoop ? Math.max(loopStart ?? 0, loopEnd ?? 0) : source.duration
     const gen = sessionGenRef.current
+    const attempt = ++splitAttemptRef.current
     const title = chart?.title
     const previous = chart
+    stopSplitRef.current = false
+    splitJobRef.current = null
+    const stopped = () => stopSplitRef.current || gen !== sessionGenRef.current
     setSplitting(true)
     setError(null)
-    setSplitProgress(progress('Splitting stems', 'Preparing audio…', 8))
+    setSplitProgress(progress('Splitting stems', 'Preparing audio…', 4))
     try {
       const ctx = await engineRef.current.ensureContext()
+      if (stopped()) return
       const piece = useLoop ? sliceBuffer(ctx, source, start, end) : source
       const wav = encodeWav(piece)
       const raw = await separateStems(
         wav,
-        { model: model.id, quality: qualityId, device, stems: model.stems },
-        (msg) => {
-          if (gen !== sessionGenRef.current) return
-          setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', msg, splitPercent(msg))))
+        { model: model.id, quality: qualityId, device, stems },
+        (update) => {
+          if (stopped()) return
+          setSplitProgress((prev) =>
+            mergeProgress(prev, progress('Splitting stems', update.message, update.percent)),
+          )
+        },
+        (jobId) => {
+          splitJobRef.current = jobId
+          if (stopSplitRef.current) void cancelSeparate(jobId)
         },
       )
-      if (gen !== sessionGenRef.current) return
-      setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', 'Decoding stems…', 92)))
+      if (stopped()) return
+      setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', 'Decoding stems…', 93)))
       const decoded = {} as Partial<Record<StemId, AudioBuffer>>
-      for (const id of model.stems) {
+      for (const id of stems) {
         const bytes = raw[id]
         if (!bytes) throw new Error(`Missing stem: ${id}`)
         decoded[id] = await ctx.decodeAudioData(bytes.slice(0))
@@ -402,13 +419,32 @@ export default function App() {
       const drumSlice = decoded.drums
       if (!drumSlice) throw new Error('Missing drum stem.')
       const placed = {} as Partial<Record<StemId, AudioBuffer>>
-      for (const id of model.stems) {
+      for (const id of stems) {
         const stem = decoded[id]
         if (!stem) continue
         placed[id] = placeStem(ctx, stem, source.length, source.sampleRate, start)
       }
-      if (gen !== sessionGenRef.current) return
+      if (stopped()) return
       const measured = measureSplitAccuracy(source, decoded, useLoop ? { start, end } : null)
+      const nextChart = title
+        ? await (async () => {
+            setSplitProgress((prev) =>
+              mergeProgress(prev, progress('Splitting stems', 'Rebuilding the drum chart…', 97)),
+            )
+            const drumChart = await analyzeDrumChart(drumSlice, title)
+            if (!useLoop || !previous) return drumChart
+            return {
+              ...previous,
+              bpm: drumChart.bpm || previous.bpm,
+              notes: [
+                ...previous.notes.filter((note) => note.t < start - 0.03 || note.t > end + 0.03),
+                ...drumChart.notes.map((note) => ({ ...note, t: note.t + start })),
+              ].sort((a, b) => a.t - b.t || a.lane.localeCompare(b.lane)),
+            }
+          })()
+        : null
+      if (stopped()) return
+
       await engineRef.current.loadStems(placed)
       setBuffer(placed.drums ?? source)
       setStemsReady(true)
@@ -419,26 +455,9 @@ export default function App() {
         loopStart: useLoop ? start : null,
         loopEnd: useLoop ? end : null,
         accuracy: measured,
-        stems: model.stems,
+        stems,
       })
-
-      if (title) {
-        setSplitProgress((prev) =>
-          mergeProgress(prev, progress('Splitting stems', 'Rebuilding drum chart from the drum stem…', 96)),
-        )
-        const drumChart = await analyzeDrumChart(drumSlice, title)
-        if (gen !== sessionGenRef.current) return
-        const nextChart =
-          useLoop && previous
-            ? {
-                ...previous,
-                bpm: drumChart.bpm || previous.bpm,
-                notes: [
-                  ...previous.notes.filter((note) => note.t < start - 0.03 || note.t > end + 0.03),
-                  ...drumChart.notes.map((note) => ({ ...note, t: note.t + start })),
-                ].sort((a, b) => a.t - b.t || a.lane.localeCompare(b.lane)),
-              }
-            : drumChart
+      if (nextChart) {
         setChart(nextChart)
         seedJudgedBefore(nextChart.notes, engineRef.current.currentTime)
         setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
@@ -452,16 +471,40 @@ export default function App() {
       setStemLevels(soloDrums)
       setSplitProgress(progress('Splitting stems', 'Stems ready.', 100))
       window.setTimeout(() => {
-        if (sessionGenRef.current === gen) setSplitProgress(null)
+        if (sessionGenRef.current === gen && !stopSplitRef.current) setSplitProgress(null)
       }, 900)
     } catch (e) {
-      if (gen !== sessionGenRef.current) return
+      if (stopped() || e instanceof SplitCancelled) {
+        setSplitProgress(null)
+        return
+      }
       console.error(e)
       setError(e instanceof Error ? e.message : 'Stem split failed.')
       setSplitProgress(null)
     } finally {
-      if (gen === sessionGenRef.current) setSplitting(false)
+      if (splitAttemptRef.current === attempt) {
+        splitJobRef.current = null
+        if (gen === sessionGenRef.current) setSplitting(false)
+      }
     }
+  }
+
+  const onPickModel = (id: string) => {
+    const stems = modelById(id).stems
+    setModelId(id)
+    setPickedStems((prev) => STEM_IDS.filter((stem) => stem === 'drums' || (prev.includes(stem) && stems.includes(stem))))
+  }
+
+  const onToggleStem = (id: StemId) => {
+    if (id === 'drums') return
+    if (!modelById(modelId).stems.includes(id)) {
+      setModelId('htdemucs_6s')
+      setPickedStems((prev) => STEM_IDS.filter((stem) => stem === 'drums' || stem === id || prev.includes(stem)))
+      return
+    }
+    setPickedStems((prev) =>
+      prev.includes(id) ? prev.filter((stem) => stem !== id) : STEM_IDS.filter((stem) => stem === id || prev.includes(stem)),
+    )
   }
 
   const onStemChange = (id: StemId, patch: Partial<{ volume: number; muted: boolean }>) => {
@@ -469,8 +512,8 @@ export default function App() {
     setStemLevels(engineRef.current.getStemLevels())
   }
 
-  const activeStems = stemsReady && splitRun ? splitRun.stems : modelById(modelId).stems
-  const matched = runMatches(splitRun, modelId, qualityId, splitRange, loopStart, loopEnd)
+  const activeStems = stemsReady && splitRun ? splitRun.stems : pickedStems
+  const matched = runMatches(splitRun, modelId, qualityId, splitRange, loopStart, loopEnd, pickedStems)
   const estimate = useMemo(() => {
     if (!sourceBuffer) return null
     if (splitRange === 'loop') {
@@ -568,6 +611,10 @@ export default function App() {
   }
 
   const newTrack = () => {
+    stopSplitRef.current = true
+    const id = splitJobRef.current
+    splitJobRef.current = null
+    if (id) void cancelSeparate(id)
     sessionGenRef.current += 1
     if (micOn) {
       micRef.current.stop()
@@ -721,13 +768,16 @@ export default function App() {
               accuracy={matched && splitRun ? splitRun.accuracy : estimate}
               accuracyKind={matched ? 'result' : 'estimate'}
               settingsDiffer={Boolean(stemsReady && splitRun && !matched)}
-              onModel={setModelId}
+              onModel={onPickModel}
               onQuality={setQualityId}
               onDevice={setDevice}
               onRange={setSplitRange}
+              pickedStems={pickedStems}
+              onToggleStem={onToggleStem}
               onChange={onStemChange}
               onSolo={onSolo}
               onSplit={() => void onSplitStems()}
+              onStop={onStopSplit}
               onResetMix={onResetMix}
             />
             <ChartEditor

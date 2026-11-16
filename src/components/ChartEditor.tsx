@@ -51,69 +51,71 @@ export function ChartEditor({ notes, currentTime, selectedId, onSelect, onChange
         <span>{notes.length} notes</span>
       </div>
 
-      <div className="editor__add">
-        {LANES.map((lane) => (
-          <button key={lane} type="button" className="btn btn--ghost btn--tiny" onClick={() => addAtPlayhead(lane)}>
-            + {LANE_LABELS[lane]}
-          </button>
-        ))}
-      </div>
-
-      {selected ? (
-        <div className="editor__selected">
-          <p>
-            {LANE_LABELS[selected.lane]} @ {selected.t.toFixed(3)}s
-          </p>
-          <div className="editor__row">
-            <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(-0.05)}>
-              −50ms
+      <div className="editor__scroll">
+        <div className="editor__add">
+          {LANES.map((lane) => (
+            <button key={lane} type="button" className="btn btn--ghost btn--tiny" onClick={() => addAtPlayhead(lane)}>
+              + {LANE_LABELS[lane]}
             </button>
-            <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(-0.01)}>
-              −10ms
-            </button>
-            <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(0.01)}>
-              +10ms
-            </button>
-            <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(0.05)}>
-              +50ms
-            </button>
-          </div>
-          <div className="editor__row">
-            {LANES.map((lane) => (
-              <button
-                key={lane}
-                type="button"
-                className={`btn btn--tiny ${selected.lane === lane ? 'btn--accent' : 'btn--ghost'}`}
-                onClick={() => setLane(lane)}
-              >
-                {LANE_LABELS[lane]}
-              </button>
-            ))}
-            <button type="button" className="btn btn--tiny btn--danger" onClick={remove}>
-              Delete
-            </button>
-          </div>
+          ))}
         </div>
-      ) : (
-        <p className="editor__empty">Select a nearby note or add one at the playhead.</p>
-      )}
 
-      <ul className="editor__list">
-        {nearby.map(({ n, d }) => (
-          <li key={n.id}>
-            <button
-              type="button"
-              className={`editor__item ${selectedId === n.id ? 'is-active' : ''}`}
-              onClick={() => onSelect(n.id)}
-            >
-              <span className={`dot dot--${n.lane}`} />
-              {LANE_LABELS[n.lane]}
-              <span>{n.t.toFixed(2)}s</span>
-              <span className="muted">{d < 0.05 ? 'now' : `${d.toFixed(2)}s away`}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+        {selected ? (
+          <div className="editor__selected">
+            <p>
+              {LANE_LABELS[selected.lane]} @ {selected.t.toFixed(3)}s
+            </p>
+            <div className="editor__row">
+              <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(-0.05)}>
+                −50ms
+              </button>
+              <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(-0.01)}>
+                −10ms
+              </button>
+              <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(0.01)}>
+                +10ms
+              </button>
+              <button type="button" className="btn btn--ghost btn--tiny" onClick={() => nudge(0.05)}>
+                +50ms
+              </button>
+            </div>
+            <div className="editor__row">
+              {LANES.map((lane) => (
+                <button
+                  key={lane}
+                  type="button"
+                  className={`btn btn--tiny ${selected.lane === lane ? 'btn--accent' : 'btn--ghost'}`}
+                  onClick={() => setLane(lane)}
+                >
+                  {LANE_LABELS[lane]}
+                </button>
+              ))}
+              <button type="button" className="btn btn--tiny btn--danger" onClick={remove}>
+                Delete
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="editor__empty">Select a nearby note or add one at the playhead.</p>
+        )}
+
+        <ul className="editor__list">
+          {nearby.map(({ n, d }) => (
+            <li key={n.id}>
+              <button
+                type="button"
+                className={`editor__item ${selectedId === n.id ? 'is-active' : ''}`}
+                onClick={() => onSelect(n.id)}
+              >
+                <span className={`dot dot--${n.lane}`} />
+                {LANE_LABELS[n.lane]}
+                <span>{n.t.toFixed(2)}s</span>
+                <span className="muted">{d < 0.05 ? 'now' : `${d.toFixed(2)}s away`}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }

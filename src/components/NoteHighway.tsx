@@ -84,7 +84,7 @@ export function NoteHighway({ notes, currentTime, hitFlash, lookAheadSec = 2.4 }
         const y = hitY - (note.t - t) * pxPerSec
         const age = t - note.t
         const alpha = age > 0 ? Math.max(0, 1 - age / 0.15) : 1
-        const r = Math.min(14, laneW * 0.32)
+        const r = Math.min(20, Math.max(12, laneW * 0.28))
 
         ctx.globalAlpha = alpha
         ctx.fillStyle = LANE_COLORS[note.lane]

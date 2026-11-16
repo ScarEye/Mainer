@@ -1,5 +1,5 @@
 import type { StemId, StemLevels } from '../types/chart'
-import { STEM_LABELS } from '../types/chart'
+import { STEM_IDS, STEM_LABELS } from '../types/chart'
 import type { DeviceChoice, QualityId, SeparateModel, SplitRange } from '../separate/models'
 import { QUALITIES } from '../separate/models'
 import { ProgressCard } from './ProgressCard'
@@ -25,9 +25,12 @@ type Props = {
   onQuality: (id: QualityId) => void
   onDevice: (device: DeviceChoice) => void
   onRange: (range: SplitRange) => void
+  pickedStems: StemId[]
+  onToggleStem: (id: StemId) => void
   onChange: (id: StemId, patch: Partial<{ volume: number; muted: boolean }>) => void
   onSolo: (id: StemId) => void
   onSplit: () => void
+  onStop: () => void
   onResetMix: () => void
 }
 
@@ -52,9 +55,12 @@ export function StemMixer({
   onQuality,
   onDevice,
   onRange,
+  pickedStems,
+  onToggleStem,
   onChange,
   onSolo,
   onSplit,
+  onStop,
   onResetMix,
 }: Props) {
   const selected = models.find((model) => model.id === modelId) ?? models[0]
@@ -87,6 +93,35 @@ export function StemMixer({
         </select>
         {selected ? <p className="mixer__hint">{selected.detail}</p> : null}
       </label>
+
+      <div className="mixer__field">
+        <span>Instruments</span>
+        <div className="mixer__stems">
+          {STEM_IDS.map((id) => {
+            const on = id === 'drums' || pickedStems.includes(id)
+            const supported = selected?.stems.includes(id) ?? false
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`mixer__stem ${on ? 'is-on' : ''}`}
+                aria-pressed={on}
+                disabled={locked || id === 'drums'}
+                title={
+                  id === 'drums'
+                    ? 'Drums stay on so the chart can be rebuilt'
+                    : supported
+                      ? STEM_LABELS[id]
+                      : 'Uses the 6-stem model'
+                }
+                onClick={() => onToggleStem(id)}
+              >
+                {STEM_LABELS[id]}
+              </button>
+            )
+          })}
+        </div>
+      </div>
 
       <div className="mixer__field">
         <span>Quality</span>
@@ -182,15 +217,6 @@ export function StemMixer({
         <p className="mixer__hint">Last split used another setting. Split again to apply this one.</p>
       )}
 
-      <button
-        type="button"
-        className="btn btn--accent mixer__split"
-        disabled={locked || device == null}
-        onClick={onSplit}
-      >
-        {splitting ? 'Splitting…' : device == null ? 'Pick CPU or GPU' : 'Split stems'}
-      </button>
-
       {splitting && splitProgress && (
         <ProgressCard
           label={splitProgress.label}
@@ -198,6 +224,21 @@ export function StemMixer({
           percent={splitProgress.percent}
           compact
         />
+      )}
+
+      {splitting ? (
+        <button type="button" className="btn btn--danger mixer__split" onClick={onStop}>
+          Stop
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn--accent mixer__split"
+          disabled={device == null}
+          onClick={onSplit}
+        >
+          {device == null ? 'Pick CPU or GPU' : 'Split stems'}
+        </button>
       )}
 
       <ul className={`mixer__list ${ready ? '' : 'is-disabled'}`}>

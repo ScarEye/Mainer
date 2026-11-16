@@ -7,6 +7,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { ffmpegExe, pythonPath, run } from './runtime.mjs'
+import { createDemucsProgress } from './separate-progress.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const catalog = JSON.parse(readFileSync(path.join(__dirname, '../src/separate/catalog.json'), 'utf8'))
@@ -207,6 +208,19 @@ async function getDemucsConfig() {
   }
 }
 
+function killProcessTree(child) {
+  if (!child?.pid) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+    return
+  }
+  try {
+    child.kill('SIGTERM')
+  } catch {
+    /* already gone */
+  }
+}
+
 function runDemucs(inputPath, outDir, options, onLog) {
   const segment = options.device === 'cuda' && options.vramMb > 0 && options.vramMb < 5000 ? 6 : 7
   const args = [
@@ -221,10 +235,11 @@ function runDemucs(inputPath, outDir, options, onLog) {
     String(options.quality.overlap),
     '--segment',
     String(segment),
-    '--out',
-    outDir,
-    inputPath,
   ]
+  if (options.stems.length === 1) {
+    args.push('--two-stems', options.stems[0])
+  }
+  args.push('--out', outDir, inputPath)
 
   return new Promise((resolve, reject) => {
     const child = spawn(pythonPath(), args, {
@@ -236,21 +251,22 @@ function runDemucs(inputPath, outDir, options, onLog) {
         HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
       },
     })
+    options.onChild?.(child)
 
     let stderr = ''
     const handleChunk = (d) => {
       const text = d.toString()
       stderr += text
-      const lines = text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean)
-      if (lines.length) onLog?.(lines[lines.length - 1])
+      onLog?.(text)
     }
     child.stdout?.on('data', handleChunk)
     child.stderr?.on('data', handleChunk)
     child.on('error', reject)
     child.on('close', (code) => {
+      if (options.cancelled?.()) {
+        reject(new Error('Stopped'))
+        return
+      }
       if (code === 0) resolve({ stderr })
       else reject(new Error(stderr.trim() || `demucs exited with ${code}`))
     })
@@ -262,14 +278,18 @@ function runDemucs(inputPath, outDir, options, onLog) {
  */
 function startSeparateJob(wavBuffer, options) {
   const jobId = randomUUID()
-  /** @type {{ created: number, status: string, message: string, error?: string, stemNames?: string[], stems?: Record<string, Buffer> }} */
+  /** @type {{ created: number, status: string, message: string, percent: number, error?: string, stemNames?: string[], stems?: Record<string, Buffer>, child?: import('node:child_process').ChildProcess, cancelled?: boolean }} */
   const job = {
     created: Date.now(),
     status: 'queued',
-    message: 'Queued for stem separation…',
-    stemNames: options.model.stems,
+    message: 'Getting the audio ready…',
+    percent: 8,
+    stemNames: options.stems,
+    cancelled: false,
   }
   stemJobs.set(jobId, job)
+
+  const progress = createDemucsProgress(options.quality.shifts, options.model.id)
 
   ;(async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'mainer-sep-'))
@@ -279,42 +299,69 @@ function startSeparateJob(wavBuffer, options) {
       if (!(await demucsAvailable())) {
         throw new Error('Stem tools are not ready yet. Start Mainer once with start.bat and wait for setup to finish.')
       }
+      if (job.cancelled) return
 
       const config = await getDemucsConfig()
       if (options.device === 'cuda' && !config.cuda) {
         throw new Error('GPU was selected, but this PyTorch install cannot see an NVIDIA GPU.')
       }
+      if (job.cancelled) return
 
-      const deviceLabel = options.device === 'cuda' ? `GPU (${config.gpuName || 'CUDA'})` : 'CPU'
       job.status = 'running'
+      job.percent = 14
       job.message = 'Saving audio…'
       await writeFile(inputPath, wavBuffer)
+      if (job.cancelled) return
 
-      job.message = `Running ${options.model.label} · ${options.quality.label} on ${deviceLabel}…`
+      job.percent = 18
+      job.message = 'Separating audio'
       console.log(
-        `[demucs ${jobId.slice(0, 8)}] model=${options.model.id} device=${options.device} shifts=${options.quality.shifts}`,
+        `[demucs ${jobId.slice(0, 8)}] model=${options.model.id} device=${options.device} shifts=${options.quality.shifts} stems=${options.stems.join(',')}`,
       )
-      await runDemucs(inputPath, outDir, { ...options, vramMb: config.vramMb }, (line) => {
-        const clipped = line.length > 140 ? `${line.slice(0, 140)}…` : line
-        job.message = clipped
-        console.log(`[demucs ${jobId.slice(0, 8)}] ${line}`)
-      })
+      await runDemucs(
+        inputPath,
+        outDir,
+        {
+          ...options,
+          vramMb: config.vramMb,
+          onChild: (child) => {
+            job.child = child
+          },
+          cancelled: () => job.cancelled,
+        },
+        (text) => {
+          if (job.cancelled) return
+          const update = progress.push(text)
+          if (update.percent >= job.percent) job.percent = update.percent
+          job.message = update.message
+        },
+      )
+      if (job.cancelled) return
 
-      job.message = 'Collecting stem files…'
+      job.percent = 90
+      job.message = 'Collecting stems…'
       const files = await findStemFiles(outDir)
       /** @type {Record<string, Buffer>} */
       const stems = {}
-      for (const name of options.model.stems) {
+      for (const name of options.stems) {
         const fp = files[name]
         if (!fp) throw new Error(`Separation did not produce ${name}.wav`)
         stems[name] = await readFile(fp)
       }
+      if (job.cancelled) return
 
       job.stems = stems
+      job.percent = 96
       job.status = 'done'
       job.message = 'Stems ready'
       console.log(`[demucs ${jobId.slice(0, 8)}] done`)
     } catch (e) {
+      if (job.cancelled) {
+        job.status = 'cancelled'
+        job.message = 'Stopped'
+        job.error = undefined
+        return
+      }
       job.status = 'error'
       job.error = e instanceof Error ? e.message : 'Stem separation failed.'
       job.message = job.error
@@ -327,11 +374,22 @@ function startSeparateJob(wavBuffer, options) {
   return jobId
 }
 
+function cancelSeparateJob(jobId) {
+  const job = stemJobs.get(jobId)
+  if (!job || job.status === 'done' || job.status === 'cancelled') return job
+  job.cancelled = true
+  job.status = 'cancelled'
+  job.message = 'Stopped'
+  job.error = undefined
+  killProcessTree(job.child)
+  return job
+}
+
 // Cleanup finished jobs every 10 minutes (never delete in-flight jobs)
 setInterval(() => {
   const cutoff = Date.now() - 30 * 60 * 1000
   for (const [id, job] of stemJobs) {
-    if ((job.status === 'done' || job.status === 'error') && job.created < cutoff) {
+    if ((job.status === 'done' || job.status === 'error' || job.status === 'cancelled') && job.created < cutoff) {
       stemJobs.delete(id)
     }
   }
@@ -453,13 +511,18 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { error: 'Pick CPU or GPU before splitting.' })
         return
       }
+      const requested = String(url.searchParams.get('stems') || '')
+        .split(',')
+        .map((stem) => stem.trim())
+        .filter((stem) => model.stems.includes(stem))
+      const stems = model.stems.filter((stem) => stem === 'drums' || requested.includes(stem))
       console.log(
-        `Starting stem job ${model.id}/${quality.id}/${device} (${(wav.length / 1024 / 1024).toFixed(1)} MB)…`,
+        `Starting stem job ${model.id}/${quality.id}/${device} [${stems.join(',')}] (${(wav.length / 1024 / 1024).toFixed(1)} MB)…`,
       )
-      const jobId = startSeparateJob(wav, { model, quality, device })
+      const jobId = startSeparateJob(wav, { model, quality, device, stems })
       sendJson(res, 202, {
         jobId,
-        stems: model.stems,
+        stems,
         message: 'Separation started.',
       })
     } catch (e) {
@@ -468,6 +531,17 @@ const server = http.createServer(async (req, res) => {
         error: e instanceof Error ? e.message : 'Stem separation failed.',
       })
     }
+    return
+  }
+
+  const cancelMatch = url.pathname.match(/^\/api\/separate\/([^/]+)\/cancel$/)
+  if (req.method === 'POST' && cancelMatch) {
+    const job = cancelSeparateJob(cancelMatch[1])
+    if (!job) {
+      sendJson(res, 404, { error: 'Job not found (expired or invalid).' })
+      return
+    }
+    sendJson(res, 200, { jobId: cancelMatch[1], status: job.status, message: job.message })
     return
   }
 
@@ -482,6 +556,7 @@ const server = http.createServer(async (req, res) => {
       jobId: statusMatch[1],
       status: job.status,
       message: job.message,
+      percent: job.percent ?? 0,
       error: job.error,
       stems: job.status === 'done' ? job.stemNames : undefined,
     })
