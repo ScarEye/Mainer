@@ -172,30 +172,33 @@ function pickPeaks(
   const found: { hz: number; mag: number }[] = []
   for (let i = minBin; i <= maxBin; i++) {
     const m = mags[i]!
-    if (m < peak * 0.16) continue
+    if (m < peak * 0.1) continue
     if (m < mags[i - 1]! || m < mags[i + 1]!) continue
     const denom = mags[i - 1]! - 2 * m + mags[i + 1]!
     const shift = Math.abs(denom) < 1e-12 ? 0 : (0.5 * (mags[i - 1]! - mags[i + 1]!)) / denom
     found.push({ hz: ((i + shift) * sampleRate) / nfft, mag: m })
   }
-  found.sort((a, b) => b.mag - a.mag)
+  found.sort((a, b) => a.hz - b.hz || b.mag - a.mag)
   const chosen: number[] = []
   for (const p of found) {
-    if (chosen.length >= maxNotes) break
-    const half = p.hz / 2
-    const halfBin = Math.round((half * nfft) / sampleRate)
-    if (halfBin >= minBin && halfBin <= maxBin && mags[halfBin]! > p.mag * 0.22) continue
     const harmonic = chosen.some((f) => {
       const ratio = p.hz / f
       const nearest = Math.round(ratio)
-      return nearest >= 2 && nearest <= 6 && Math.abs(ratio - nearest) < 0.045
+      return nearest >= 2 && nearest <= 6 && Math.abs(ratio - nearest) < 0.04
     })
     if (harmonic) continue
     const midi = freqToMidi(p.hz)
     if (chosen.some((f) => Math.abs(freqToMidi(f) - midi) === 0)) continue
     chosen.push(p.hz)
   }
-  return chosen
+  chosen.sort((a, b) => {
+    const mag = (hz: number) => {
+      const bin = Math.round((hz * nfft) / sampleRate)
+      return mags[bin] ?? 0
+    }
+    return mag(b) - mag(a)
+  })
+  return chosen.slice(0, maxNotes)
 }
 
 type OpenNote = { t: number; last: number; midi: number; vel: number }

@@ -66,3 +66,41 @@ export function isSharp(midi: number): boolean {
   const pc = ((midi % 12) + 12) % 12
   return pc === 1 || pc === 3 || pc === 6 || pc === 8 || pc === 10
 }
+
+/** Guitar is written an octave above the sounding pitch. */
+export function writtenMidi(midi: number, instrument: MelodicInstrument): number {
+  return instrument === 'guitar' ? midi + 12 : midi
+}
+
+/**
+ * Octaves to add so the median note sits on the staff.
+ * Positive writes the part higher than the pitches passed in.
+ */
+export function staffOctaveShift(midis: number[], clef: 'treble' | 'bass'): number {
+  if (!midis.length) return 0
+  const steps = midis.map((midi) => staffStep(midi, clef)).sort((a, b) => a - b)
+  let placed = steps[Math.floor(steps.length / 2)]!
+  let shift = 0
+  while (placed > 10 && shift > -2) {
+    shift -= 1
+    placed -= 7
+  }
+  while (placed < -1 && shift < 2) {
+    shift += 1
+    placed += 7
+  }
+  return shift
+}
+
+/** Octaves the written note sits above the sounding pitch. Guitar starts at +1. */
+export function writtenOctavesAbove(instrument: MelodicInstrument, shift: number): number {
+  return (instrument === 'guitar' ? 1 : 0) + shift
+}
+
+export function octaveMark(octavesAbove: number): string | null {
+  if (octavesAbove === 1) return '8vb'
+  if (octavesAbove >= 2) return '15mb'
+  if (octavesAbove === -1) return '8va'
+  if (octavesAbove <= -2) return '15ma'
+  return null
+}

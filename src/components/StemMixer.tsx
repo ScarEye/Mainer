@@ -96,6 +96,11 @@ export function StemMixer({
           ))}
         </select>
         {selected ? <p className="mixer__hint">{selected.detail}</p> : null}
+        {selected &&
+        (pickedStems.includes('guitar') || pickedStems.includes('piano')) &&
+        !selected.stems.includes('guitar') ? (
+          <p className="mixer__hint">Guitar and piano are selected, so the split uses HT Demucs 6-stem.</p>
+        ) : null}
       </label>
 
       <div className="mixer__field">

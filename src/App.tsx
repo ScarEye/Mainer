@@ -70,6 +70,34 @@ function runMatches(
   return true
 }
 
+function visualTip(mode: VisualMode, instrument: VisualInstrument): string {
+  const name = STEM_LABELS[instrument]
+  if (mode === 'digital' && instrument === 'drums') {
+    return 'Each column is one drum. Play when the block lands in the outline on the line.'
+  }
+  if (mode === 'digital' && instrument === 'piano') {
+    return 'Columns are piano keys. Black keys sit between the white ones. Play the named key when it reaches the line.'
+  }
+  if (mode === 'digital') {
+    return `${name}: high string on the left, low string on the right. The large number is the fret. Play when it reaches the line.`
+  }
+  if (mode === 'notation' && instrument === 'guitar') {
+    return 'Guitar is written an octave higher than it sounds. Notes sit on the treble staff and move in from the right.'
+  }
+  if (mode === 'notation' && instrument === 'bass') {
+    return 'Bass uses the bass staff. A very low part is written up an octave and marked 8vb.'
+  }
+  if (mode === 'notation' && instrument === 'piano') {
+    return 'Piano uses the grand staff, treble above bass. Notes move in from the right.'
+  }
+  if (mode === 'notation') {
+    return 'Kick sits in the bottom space, snare in the middle, cymbals above the staff. Notes move in from the right.'
+  }
+  if (instrument === 'drums') return 'The kit piece lights up as the hit arrives.'
+  if (instrument === 'piano') return 'The piano key lights up as the note arrives.'
+  return 'The fret lights up as the note arrives.'
+}
+
 function formatTime(t: number) {
   const m = Math.floor(t / 60)
   const s = Math.floor(t % 60)
@@ -92,7 +120,7 @@ function youtubePercent(detail: string) {
   if (text.includes('downloading audio')) return 26
   if (text.includes('audio downloaded')) return 38
   if (text.includes('decoding')) return 52
-  if (text.includes('building drum chart')) return 84
+  if (text.includes('opening the player')) return 84
   return 14
 }
 
@@ -319,8 +347,14 @@ export default function App() {
       const ctx = await engineRef.current.ensureContext()
       const decoded = await ctx.decodeAudioData(arr.slice(0))
       if (gen !== sessionGenRef.current) return
-      setLoadingProgress((prev) => mergeProgress(prev, progress('Loading track', 'Building drum chart…', 84)))
-      const nextChart = await analyzeDrumChart(decoded, title)
+      setLoadingProgress((prev) => mergeProgress(prev, progress('Loading track', 'Opening the player…', 84)))
+      const nextChart: DrumChart = {
+        title,
+        bpm: 0,
+        offsetMs: 0,
+        instrument: 'drums',
+        notes: [],
+      }
       if (gen !== sessionGenRef.current) return
       await engineRef.current.loadBuffer(decoded)
       setSourceBuffer(decoded)
@@ -383,7 +417,12 @@ export default function App() {
   const onSplitStems = async () => {
     const source = sourceBuffer
     if (!source || splitting || !device) return
-    const model = modelById(modelId)
+    let model = modelById(modelId)
+    const wantsLead = pickedStems.includes('guitar') || pickedStems.includes('piano')
+    if (wantsLead && !model.stems.includes('guitar')) {
+      model = modelById('htdemucs_6s')
+      setModelId(model.id)
+    }
     const stems = STEM_IDS.filter((id) => id === 'drums' || (pickedStems.includes(id) && model.stems.includes(id)))
     const loopOk =
       loopStart != null && loopEnd != null && Math.abs(loopEnd - loopStart) >= 0.25
@@ -495,7 +534,7 @@ export default function App() {
       })
 
       await engineRef.current.loadStems(placed)
-      setBuffer(placed.drums ?? source)
+      setBuffer(source)
       setStemsReady(true)
       setSplitRun({
         model: model.id,
@@ -512,12 +551,9 @@ export default function App() {
         setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
         setLastJudgement(null)
       }
-      const soloDrums = defaultStemLevels()
-      for (const id of STEM_IDS) {
-        soloDrums[id] = { volume: 1, muted: id !== 'drums' }
-      }
-      engineRef.current.setAllStemLevels(soloDrums)
-      setStemLevels(soloDrums)
+      const openMix = defaultStemLevels()
+      engineRef.current.setAllStemLevels(openMix)
+      setStemLevels(openMix)
       setSplitProgress(progress('Splitting stems', 'Stems ready.', 100))
       window.setTimeout(() => {
         if (sessionGenRef.current === gen && !stopSplitRef.current) setSplitProgress(null)
@@ -539,9 +575,7 @@ export default function App() {
   }
 
   const onPickModel = (id: string) => {
-    const stems = modelById(id).stems
     setModelId(id)
-    setPickedStems((prev) => STEM_IDS.filter((stem) => stem === 'drums' || (prev.includes(stem) && stems.includes(stem))))
   }
 
   const onToggleStem = (id: StemId) => {
@@ -677,6 +711,8 @@ export default function App() {
     setStatus('idle')
   }
 
+  const drumsAwaiting = Boolean(chart && chart.notes.length === 0 && !stemsReady)
+
   return (
     <div className="app">
       <header className="top">
@@ -729,12 +765,13 @@ export default function App() {
                 <div>
                   <h1>{chart.title}</h1>
                   <p>
-                    ~{chart.bpm} BPM ·{' '}
-                    {showInstrument === 'drums'
-                      ? `${chart.notes.length} drum notes`
-                      : `${pitchCharts[showInstrument]?.length ?? 0} ${STEM_LABELS[showInstrument].toLowerCase()} notes`}{' '}
-                    · {STEM_LABELS[showInstrument]} · {formatTime(duration)}
-                    {stemsReady ? ' · stems ready' : ''}
+                    {showInstrument === 'drums' && drumsAwaiting
+                      ? `Split stems to chart drums · ${formatTime(duration)}`
+                      : `${chart.bpm > 0 ? `~${chart.bpm} BPM · ` : ''}${
+                          showInstrument === 'drums'
+                            ? `${chart.notes.length} drum notes`
+                            : `${pitchCharts[showInstrument]?.length ?? 0} ${STEM_LABELS[showInstrument].toLowerCase()} notes`
+                        } · ${STEM_LABELS[showInstrument]} · ${formatTime(duration)}${stemsReady ? ' · stems ready' : ''}`}
                   </p>
                 </div>
                 <VisualModePicker mode={visualMode} onChange={changeVisualMode} />
@@ -747,15 +784,9 @@ export default function App() {
               pitchNotes={showInstrument === 'drums' ? null : (pitchCharts[showInstrument] ?? null)}
               currentTime={currentTime}
               hitFlash={hitFlash}
+              awaitingChart={drumsAwaiting && showInstrument === 'drums'}
             />
-            <p className="tip tip--visual">
-              {visualMode === 'digital' &&
-                `${STEM_LABELS[showInstrument]}: notes fall to the HIT line. Click a mix name to change instrument.`}
-              {visualMode === 'notation' &&
-                `${STEM_LABELS[showInstrument]}: staff notation — notes approach the NOW line from the right.`}
-              {visualMode === 'kit' &&
-                `${STEM_LABELS[showInstrument]}: the part lights up as the note arrives.`}
-            </p>
+            <p className="tip tip--visual">{visualTip(visualMode, showInstrument)}</p>
             <WaveformScrub
               buffer={buffer}
               currentTime={currentTime}

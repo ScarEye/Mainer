@@ -1,6 +1,15 @@
 import { useEffect, useRef } from 'react'
 import type { MelodicInstrument, PitchNote } from '../types/chart'
-import { isSharp, midiToName, pitchColor, staffStep } from '../audio/music'
+import {
+  isSharp,
+  midiToName,
+  octaveMark,
+  pitchColor,
+  staffOctaveShift,
+  staffStep,
+  writtenMidi,
+  writtenOctavesAbove,
+} from '../audio/music'
 
 type Props = {
   instrument: MelodicInstrument
@@ -9,12 +18,14 @@ type Props = {
   lookAheadSec?: number
 }
 
+type ClefName = 'treble' | 'bass'
+
 function yForStep(top: number, lineGap: number, step: number) {
   return top + 4 * lineGap - step * (lineGap / 2)
 }
 
 function drawStaff(ctx: CanvasRenderingContext2D, left: number, right: number, top: number, lineGap: number) {
-  ctx.strokeStyle = 'rgba(232,220,200,0.35)'
+  ctx.strokeStyle = 'rgba(232,220,200,0.4)'
   ctx.lineWidth = 1.5
   for (let i = 0; i < 5; i++) {
     const y = top + i * lineGap
@@ -25,6 +36,37 @@ function drawStaff(ctx: CanvasRenderingContext2D, left: number, right: number, t
   }
 }
 
+function drawTrebleClef(ctx: CanvasRenderingContext2D, x: number, staffTop: number, gap: number) {
+  const gY = staffTop + 3 * gap
+  const fontSize = gap * 6.6
+  // Segoe UI Symbol's G clef curl sits about 0.18em above the baseline.
+  const baseline = gY + fontSize * 0.183
+  ctx.save()
+  ctx.fillStyle = 'rgba(232,220,200,0.95)'
+  ctx.font = `${fontSize}px "Segoe UI Symbol", "Cambria Math", serif`
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText('\u{1D11E}', x, baseline)
+  ctx.restore()
+}
+
+function drawBassClef(ctx: CanvasRenderingContext2D, x: number, staffTop: number, gap: number) {
+  const f = staffTop + gap
+  ctx.save()
+  ctx.strokeStyle = 'rgba(232,220,200,0.92)'
+  ctx.fillStyle = 'rgba(232,220,200,0.92)'
+  ctx.lineCap = 'round'
+  ctx.lineWidth = Math.max(1.7, gap * 0.13)
+  ctx.beginPath()
+  ctx.arc(x - gap * 0.15, f + gap * 0.15, gap * 0.95, Math.PI * 1.15, Math.PI * 0.15, true)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(x + gap * 0.72, f - gap * 0.42, gap * 0.13, 0, Math.PI * 2)
+  ctx.arc(x + gap * 0.72, f + gap * 0.42, gap * 0.13, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
 function drawLedgers(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -32,9 +74,10 @@ function drawLedgers(
   lineGap: number,
   step: number,
 ) {
-  ctx.strokeStyle = 'rgba(232,220,200,0.45)'
-  ctx.lineWidth = 1.25
-  const half = Math.max(10, lineGap * 0.85)
+  if (step <= 8 && step >= 0) return
+  ctx.strokeStyle = 'rgba(232,220,200,0.5)'
+  ctx.lineWidth = 1.35
+  const half = Math.max(11, lineGap * 0.95)
   if (step > 8) {
     for (let s = 10; s <= step; s += 2) {
       const y = yForStep(top, lineGap, s)
@@ -43,7 +86,7 @@ function drawLedgers(
       ctx.lineTo(x + half, y)
       ctx.stroke()
     }
-  } else if (step < 0) {
+  } else {
     for (let s = -2; s >= step; s -= 2) {
       const y = yForStep(top, lineGap, s)
       ctx.beginPath()
@@ -81,81 +124,128 @@ export function PitchNotation({ instrument, notes, currentTime, lookAheadSec = 3
       ctx.fillStyle = '#0f1117'
       ctx.fillRect(0, 0, w, h)
 
-      const marginL = 78
-      const marginR = 24
       const grand = inst === 'piano'
-      const lineGap = Math.max(16, Math.min(28, h * (grand ? 0.032 : 0.042)))
+      const marginL = 36
+      const marginR = 28
+      const lineGap = Math.max(18, Math.min(grand ? 30 : 36, (h - 160) / (grand ? 16 : 12)))
       const staffBlock = lineGap * 4
-      const gapBetween = lineGap * 2.4
+      const gapBetween = lineGap * 3
       const blockH = grand ? staffBlock * 2 + gapBetween : staffBlock
-      const staffTop = Math.max(36, (h - blockH) * 0.42)
+      const staffTop = Math.max(lineGap * 2.8, (h - blockH) / 2 - lineGap * 0.4)
       const bassTop = staffTop + staffBlock + gapBetween
-      const playheadX = marginL + 36
+      const playheadX = marginL + lineGap * 5.5
       const pxPerSec = (w - playheadX - marginR) / ahead
 
-      drawStaff(ctx, marginL, w - marginR, staffTop, lineGap)
-      if (grand) drawStaff(ctx, marginL, w - marginR, bassTop, lineGap)
-
-      ctx.fillStyle = 'rgba(232,220,200,0.75)'
-      ctx.font = `700 ${Math.round(lineGap * 1.15)}px "Orbitron", sans-serif`
-      ctx.textAlign = 'center'
-      ctx.fillText(grand ? 'grand' : inst === 'bass' ? 'bass' : 'treble', marginL / 2, staffTop + lineGap * 2.1)
-      ctx.font = '600 11px "Share Tech Mono", monospace'
-      ctx.fillText('clef', marginL / 2, staffTop + lineGap * 3.15)
-
-      const clefOf = (midi: number): 'treble' | 'bass' => {
+      const clefOf = (midi: number): ClefName => {
         if (inst === 'bass') return 'bass'
         if (inst === 'piano' && midi < 60) return 'bass'
         return 'treble'
       }
-      const topOf = (clef: 'treble' | 'bass') => (clef === 'bass' && grand ? bassTop : staffTop)
+      const written = n.map((note) => writtenMidi(note.midi, inst))
+      const trebleShift = grand ? 0 : staffOctaveShift(written.filter((_, i) => clefOf(n[i]!.midi) === 'treble'), 'treble')
+      const bassShift = grand ? 0 : staffOctaveShift(written.filter((_, i) => clefOf(n[i]!.midi) === 'bass'), 'bass')
+      const topOf = (clef: ClefName) => (clef === 'bass' && grand ? bassTop : staffTop)
+      const shiftOf = (clef: ClefName) => (clef === 'bass' ? bassShift : trebleShift)
+
+      drawStaff(ctx, marginL, w - marginR, staffTop, lineGap)
+      if (grand) {
+        drawStaff(ctx, marginL, w - marginR, bassTop, lineGap)
+        const braceTop = staffTop
+        const braceBot = bassTop + staffBlock
+        ctx.fillStyle = 'rgba(232,220,200,0.85)'
+        ctx.fillRect(marginL - 14, braceTop, 3.5, braceBot - braceTop)
+        ctx.fillRect(marginL - 8, braceTop, 1.5, braceBot - braceTop)
+        drawTrebleClef(ctx, marginL + lineGap * 1.15, staffTop, lineGap)
+        drawBassClef(ctx, marginL + lineGap * 1.15, bassTop, lineGap)
+      } else if (inst === 'bass') {
+        drawBassClef(ctx, marginL + lineGap * 1.15, staffTop, lineGap)
+      } else {
+        drawTrebleClef(ctx, marginL + lineGap * 1.15, staffTop, lineGap)
+      }
+
+      ctx.fillStyle = 'rgba(232,220,200,0.8)'
+      ctx.font = `700 ${Math.round(lineGap * 0.72)}px "Share Tech Mono", monospace`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'top'
+      if (!grand) {
+        const mark = inst === 'guitar' ? octaveMark(writtenOctavesAbove('guitar', trebleShift)) : octaveMark(bassShift)
+        if (mark) ctx.fillText(mark, marginL + lineGap * 1.15, staffTop + staffBlock + 8)
+      }
 
       ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)'
       ctx.lineWidth = 2
+      const barTop = staffTop - lineGap * 1.3
+      const barBot = (grand ? bassTop : staffTop) + staffBlock + lineGap * 0.9
       ctx.beginPath()
-      ctx.moveTo(playheadX, staffTop - lineGap * 0.8)
-      ctx.lineTo(playheadX, (grand ? bassTop : staffTop) + staffBlock + lineGap * 0.4)
+      ctx.moveTo(playheadX, barTop)
+      ctx.lineTo(playheadX, barBot)
       ctx.stroke()
-      ctx.fillStyle = 'rgba(0, 240, 255, 0.7)'
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.75)'
       ctx.font = '500 11px "Share Tech Mono", monospace'
       ctx.textAlign = 'center'
-      ctx.fillText('NOW', playheadX, staffTop - lineGap * 0.8 - 6)
+      ctx.textBaseline = 'bottom'
+      ctx.fillText('NOW', playheadX, barTop - 4)
 
       const t0 = t - 0.15
       const t1 = t + ahead
-      for (const note of n) {
-        if (note.t < t0 || note.t > t1) continue
+      const visible = n.filter((note) => note.t >= t0 && note.t <= t1).sort((a, b) => a.t - b.t || a.midi - b.midi)
+      const placed = visible.map((note) => {
         const clef = clefOf(note.midi)
-        const step = staffStep(note.midi, clef)
-        const top = topOf(clef)
-        const x = playheadX + (note.t - t) * pxPerSec
-        const y = yForStep(top, lineGap, step)
-        const color = pitchColor(note.midi)
-        ctx.globalAlpha = note.t < t ? Math.max(0.25, 1 - (t - note.t) / 0.2) : 1
-        drawLedgers(ctx, x, top, lineGap, step)
-        ctx.fillStyle = color
+        const midi = writtenMidi(note.midi, inst) + shiftOf(clef) * 12
+        return { note, clef, midi, step: staffStep(midi, clef) }
+      })
+      for (let i = 0; i < placed.length; i++) {
+        const item = placed[i]!
+        let column = 0
+        for (let j = 0; j < i; j++) {
+          const other = placed[j]!
+          if (other.clef !== item.clef) continue
+          if (Math.abs(other.note.t - item.note.t) > 0.04) continue
+          if (Math.abs(other.step - item.step) <= 1) column = Math.min(2, column + 1)
+        }
+        const top = topOf(item.clef)
+        const x = playheadX + (item.note.t - t) * pxPerSec + column * lineGap * 1.15
+        const y = yForStep(top, lineGap, item.step)
+        const color = pitchColor(item.note.midi)
+        const headRx = Math.max(7, lineGap * 0.48)
+        const headRy = Math.max(5, lineGap * 0.34)
+        ctx.globalAlpha = item.note.t < t ? Math.max(0.25, 1 - (t - item.note.t) / 0.2) : 1
+        drawLedgers(ctx, x, top, lineGap, item.step)
         ctx.strokeStyle = color
-        if (isSharp(note.midi)) {
-          ctx.font = `700 ${Math.round(lineGap * 0.95)}px "Share Tech Mono", monospace`
+        ctx.fillStyle = color
+        ctx.lineWidth = 1.7
+        const stemDown = item.step >= 4
+        const stemX = x + (stemDown ? -headRx * 0.78 : headRx * 0.78)
+        ctx.beginPath()
+        ctx.moveTo(stemX, y)
+        ctx.lineTo(stemX, y + (stemDown ? 1 : -1) * lineGap * 3.1)
+        ctx.stroke()
+        if (isSharp(item.midi)) {
+          ctx.font = `700 ${Math.round(lineGap * 0.9)}px "Share Tech Mono", monospace`
           ctx.textAlign = 'center'
-          ctx.fillText('#', x - lineGap * 0.85, y + 4)
+          ctx.textBaseline = 'middle'
+          ctx.fillText('#', x - headRx - lineGap * 0.45, y)
         }
         ctx.beginPath()
-        ctx.ellipse(x, y, Math.max(7, lineGap * 0.42), Math.max(5.5, lineGap * 0.32), -0.4, 0, Math.PI * 2)
+        ctx.ellipse(x, y, headRx, headRy, -0.4, 0, Math.PI * 2)
         ctx.fill()
         ctx.globalAlpha = 1
       }
 
-      ctx.fillStyle = 'rgba(154,144,132,0.9)'
-      ctx.font = '500 11px "Share Tech Mono", monospace'
+      const upcoming = n.find((note) => note.t >= t - 0.02)
+      ctx.fillStyle = 'rgba(154,144,132,0.95)'
+      ctx.font = '500 12px "Share Tech Mono", monospace'
       ctx.textAlign = 'left'
-      const sample = n.find((note) => note.t >= t) ?? n[0]
+      ctx.textBaseline = 'alphabetic'
+      const guitarMark = inst === 'guitar' ? octaveMark(writtenOctavesAbove('guitar', trebleShift)) : null
+      const bassMark = inst === 'bass' ? octaveMark(bassShift) : null
+      const markNote = guitarMark ? ` · written ${guitarMark}` : bassMark ? ` · written ${bassMark}` : ''
       ctx.fillText(
-        sample
-          ? `${inst} staff · next ${midiToName(sample.midi)} · notes approach from the right`
-          : `${inst} staff · notes approach from the right`,
+        upcoming
+          ? `${inst} · next ${midiToName(upcoming.midi)}${markNote}`
+          : `${inst} staff${markNote}`,
         marginL,
-        h - 16,
+        h - 18,
       )
     }
 

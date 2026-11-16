@@ -1,12 +1,24 @@
 import { useEffect, useRef } from 'react'
 import type { ChartNote, DrumLane } from '../types/chart'
-import { LANE_SHORT, LANE_COLORS, LANES } from '../types/chart'
+import { LANE_COLORS, LANE_LABELS, LANES } from '../types/chart'
 
 type Props = {
   notes: ChartNote[]
   currentTime: number
   hitFlash: Partial<Record<DrumLane, number>>
   lookAheadSec?: number
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, r)
 }
 
 export function NoteHighway({ notes, currentTime, hitFlash, lookAheadSec = 2.4 }: Props) {
@@ -41,66 +53,114 @@ export function NoteHighway({ notes, currentTime, hitFlash, lookAheadSec = 2.4 }
       ctx.fillStyle = grad
       ctx.fillRect(0, 0, w, h)
 
-      const padX = 12
+      const headerH = 64
+      const padX = 16
       const laneW = (w - padX * 2) / LANES.length
-      const hitY = h * 0.82
-      const pxPerSec = hitY / ahead
+      const hitY = h * 0.78
+      const pxPerSec = (hitY - headerH - 24) / ahead
+      const headW = Math.min(laneW * 0.72, 92)
+      const headH = 40
 
       LANES.forEach((lane, i) => {
         const x = padX + i * laneW
-        ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.045)'
-        ctx.fillRect(x, 0, laneW, h)
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.04)'
+        ctx.fillRect(x, headerH, laneW, h - headerH)
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(x + laneW / 2, headerH)
+        ctx.lineTo(x + laneW / 2, hitY)
+        ctx.stroke()
 
-        ctx.fillStyle = 'rgba(232,220,200,0.4)'
-        ctx.font = `600 ${laneW < 70 ? 9 : 11}px "Share Tech Mono", monospace`
-        ctx.textAlign = 'center'
-        ctx.fillText(LANE_SHORT[lane], x + laneW / 2, 18)
+        const cx = x + laneW / 2
+        ctx.strokeStyle = LANE_COLORS[lane]
+        ctx.globalAlpha = 0.85
+        ctx.lineWidth = 2
+        roundRect(ctx, cx - headW / 2, hitY - headH / 2, headW, headH, 8)
+        ctx.stroke()
+        ctx.globalAlpha = 1
 
         const f = flash[lane] ?? 0
         if (f > 0) {
-          ctx.fillStyle = `rgba(255, 200, 120, ${0.18 * f})`
-          ctx.fillRect(x, hitY - 40, laneW, 80)
+          ctx.fillStyle = LANE_COLORS[lane]
+          ctx.globalAlpha = 0.18 * f
+          roundRect(ctx, cx - headW / 2, hitY - headH / 2, headW, headH, 8)
+          ctx.fill()
+          ctx.globalAlpha = 1
         }
       })
 
-      ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)'
-      ctx.lineWidth = 3
+      ctx.save()
       ctx.beginPath()
-      ctx.moveTo(padX, hitY)
-      ctx.lineTo(w - padX, hitY)
-      ctx.stroke()
-
-      ctx.fillStyle = 'rgba(0, 240, 255, 0.65)'
-      ctx.font = '500 11px "Share Tech Mono", monospace'
-      ctx.textAlign = 'left'
-      ctx.fillText('HIT', padX, hitY - 8)
-
+      ctx.rect(0, headerH, w, h - headerH)
+      ctx.clip()
       const t1 = t + ahead
       for (const note of n) {
-        if (note.t < t - 0.15 || note.t > t1) continue
+        if (note.t < t - 0.2 || note.t > t1) continue
         const laneIndex = LANES.indexOf(note.lane)
         if (laneIndex < 0) continue
         const x = padX + laneIndex * laneW + laneW / 2
         const y = hitY - (note.t - t) * pxPerSec
         const age = t - note.t
-        const alpha = age > 0 ? Math.max(0, 1 - age / 0.15) : 1
-        const r = Math.min(20, Math.max(12, laneW * 0.28))
-
-        ctx.globalAlpha = alpha
+        ctx.globalAlpha = age > 0 ? Math.max(0, 1 - age / 0.18) : 1
         ctx.fillStyle = LANE_COLORS[note.lane]
         ctx.shadowColor = LANE_COLORS[note.lane]
-        ctx.shadowBlur = 10
-        ctx.fillRect(x - r, y - r * 0.5, r * 2, r)
+        ctx.shadowBlur = 12
+        roundRect(ctx, x - headW / 2, y - headH / 2, headW, headH, 8)
+        ctx.fill()
         ctx.shadowBlur = 0
+        ctx.fillStyle = '#0a0a0f'
+        ctx.font = `700 ${headW < 64 ? 11 : 13}px "Share Tech Mono", monospace`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(LANE_LABELS[note.lane], x, y)
         ctx.globalAlpha = 1
       }
+      ctx.restore()
+
+      ctx.fillStyle = '#12141c'
+      ctx.fillRect(0, 0, w, headerH)
+      ctx.strokeStyle = 'rgba(232,220,200,0.12)'
+      ctx.beginPath()
+      ctx.moveTo(0, headerH)
+      ctx.lineTo(w, headerH)
+      ctx.stroke()
+      LANES.forEach((lane, i) => {
+        const x = padX + i * laneW + laneW / 2
+        ctx.fillStyle = LANE_COLORS[lane]
+        ctx.fillRect(x - 14, 10, 28, 4)
+        ctx.font = `700 ${laneW < 90 ? 12 : 15}px "Share Tech Mono", monospace`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(LANE_LABELS[lane], x, 38)
+      })
+
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.95)'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(padX, hitY)
+      ctx.lineTo(w - padX, hitY)
+      ctx.stroke()
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.9)'
+      ctx.font = '700 12px "Share Tech Mono", monospace'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'bottom'
+      ctx.fillText('PLAY', padX, hitY - headH / 2 - 6)
     }
 
-    draw()
+    let raf = 0
+    const loop = () => {
+      draw()
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
     const ro = new ResizeObserver(() => draw())
     ro.observe(parent)
-    return () => ro.disconnect()
-  }, [notes, currentTime, hitFlash, lookAheadSec])
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [notes])
 
   return (
     <div className="highway" ref={wrapRef}>

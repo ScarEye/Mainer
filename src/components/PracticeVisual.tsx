@@ -15,19 +15,43 @@ type Props = {
   pitchNotes: PitchNote[] | null
   currentTime: number
   hitFlash: Partial<Record<DrumLane, number>>
+  awaitingChart?: boolean
 }
 
-export function PracticeVisual({ mode, instrument, notes, pitchNotes, currentTime, hitFlash }: Props) {
-  if (instrument !== 'drums' && pitchNotes == null) {
-    const name = STEM_LABELS[instrument]
+export function PracticeVisual({ mode, instrument, notes, pitchNotes, currentTime, hitFlash, awaitingChart }: Props) {
+  if (instrument === 'drums' && awaitingChart) {
     return (
       <div className="highway visual-empty">
         <div>
-          <strong>{name}</strong>
-          <p>Split stems, then click {name} in the mix to chart it.</p>
+          <strong>Drums</strong>
+          <p>Split stems to chart the drums. The full mix is not turned into drum notation.</p>
         </div>
       </div>
     )
+  }
+
+  if (instrument !== 'drums') {
+    const name = STEM_LABELS[instrument]
+    if (pitchNotes == null) {
+      return (
+        <div className="highway visual-empty">
+          <div>
+            <strong>{name}</strong>
+            <p>Split stems, then click {name} in the mix to chart it.</p>
+          </div>
+        </div>
+      )
+    }
+    if (pitchNotes.length === 0) {
+      return (
+        <div className="highway visual-empty">
+          <div>
+            <strong>{name}</strong>
+            <p>The {name.toLowerCase()} stem came back empty. Leave it selected and split again with HT Demucs 6-stem.</p>
+          </div>
+        </div>
+      )
+    }
   }
 
   if (instrument === 'drums') {
