@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import process from 'node:process'
+import { bootstrap } from './bootstrap.mjs'
 import { killMainerPorts } from './kill-ports.mjs'
 
 const children = []
@@ -65,6 +66,8 @@ if (killed.length) {
 } else {
   console.log('  ports were free')
 }
+
+await bootstrap()
 
 console.log('Starting API + Vite…')
 start(process.execPath, ['server/fetch-youtube.mjs'], 'api')

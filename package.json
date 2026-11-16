@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/dev.mjs",
+    "setup": "node scripts/bootstrap.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "server": "node server/fetch-youtube.mjs",

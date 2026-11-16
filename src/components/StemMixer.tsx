@@ -1,12 +1,30 @@
 import type { StemId, StemLevels } from '../types/chart'
-import { STEM_IDS, STEM_LABELS } from '../types/chart'
+import { STEM_LABELS } from '../types/chart'
+import type { DeviceChoice, QualityId, SeparateModel, SplitRange } from '../separate/models'
+import { QUALITIES } from '../separate/models'
 import { ProgressCard } from './ProgressCard'
 
 type Props = {
   levels: StemLevels
+  activeStems: StemId[]
   ready: boolean
   splitting: boolean
   splitProgress?: { label: string; detail: string; percent: number } | null
+  models: SeparateModel[]
+  modelId: string
+  quality: QualityId
+  device: DeviceChoice | null
+  cuda: boolean
+  gpuName: string | null
+  range: SplitRange
+  loopReady: boolean
+  accuracy: number | null
+  accuracyKind: 'estimate' | 'result'
+  settingsDiffer: boolean
+  onModel: (id: string) => void
+  onQuality: (id: QualityId) => void
+  onDevice: (device: DeviceChoice) => void
+  onRange: (range: SplitRange) => void
   onChange: (id: StemId, patch: Partial<{ volume: number; muted: boolean }>) => void
   onSolo: (id: StemId) => void
   onSplit: () => void
@@ -15,34 +33,163 @@ type Props = {
 
 export function StemMixer({
   levels,
+  activeStems,
   ready,
   splitting,
   splitProgress,
+  models,
+  modelId,
+  quality,
+  device,
+  cuda,
+  gpuName,
+  range,
+  loopReady,
+  accuracy,
+  accuracyKind,
+  settingsDiffer,
+  onModel,
+  onQuality,
+  onDevice,
+  onRange,
   onChange,
   onSolo,
   onSplit,
   onResetMix,
 }: Props) {
+  const selected = models.find((model) => model.id === modelId) ?? models[0]
+  const locked = splitting
+
   return (
     <div className="mixer">
       <div className="mixer__head">
         <h3>Instrument mix</h3>
-        {!ready ? (
-          <button type="button" className="btn btn--accent" disabled={splitting} onClick={onSplit}>
-            {splitting ? 'Splitting…' : 'Split stems'}
-          </button>
-        ) : (
-          <button type="button" className="btn btn--ghost" onClick={onResetMix}>
+        {ready ? (
+          <button type="button" className="btn btn--ghost" onClick={onResetMix} disabled={locked}>
             Unmute all
           </button>
-        )}
+        ) : null}
       </div>
 
-      {!ready && (
-        <p className="mixer__hint">
-          Split into Drums / Bass / Vocals / Other. Uses your GPU when available (much faster than CPU).
-        </p>
+      <label className="mixer__field">
+        <span>Model</span>
+        <select
+          className="mixer__select"
+          value={modelId}
+          disabled={locked}
+          onChange={(e) => onModel(e.target.value)}
+        >
+          {models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.label}
+            </option>
+          ))}
+        </select>
+        {selected ? <p className="mixer__hint">{selected.detail}</p> : null}
+      </label>
+
+      <div className="mixer__field">
+        <span>Quality</span>
+        <div className="mixer__seg" role="radiogroup" aria-label="Quality">
+          {QUALITIES.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="radio"
+              aria-checked={quality === item.id}
+              className={`mixer__choice ${quality === item.id ? 'is-on' : ''}`}
+              disabled={locked}
+              onClick={() => onQuality(item.id)}
+            >
+              <strong>{item.label}</strong>
+              <small>{item.time}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mixer__pair">
+        <div className="mixer__field">
+          <span>Device</span>
+          <div className="mixer__seg" role="radiogroup" aria-label="Device">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={device === 'cpu'}
+              className={`mixer__choice ${device === 'cpu' ? 'is-on' : ''}`}
+              disabled={locked}
+              onClick={() => onDevice('cpu')}
+            >
+              <strong>CPU</strong>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={device === 'cuda'}
+              className={`mixer__choice ${device === 'cuda' ? 'is-on' : ''}`}
+              disabled={locked || !cuda}
+              title={cuda ? gpuName || 'NVIDIA GPU' : 'No NVIDIA GPU in this install'}
+              onClick={() => onDevice('cuda')}
+            >
+              <strong>GPU</strong>
+            </button>
+          </div>
+        </div>
+
+        <div className="mixer__field">
+          <span>Range</span>
+          <div className="mixer__seg" role="radiogroup" aria-label="Range">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={range === 'full'}
+              className={`mixer__choice ${range === 'full' ? 'is-on' : ''}`}
+              disabled={locked}
+              onClick={() => onRange('full')}
+            >
+              <strong>Full</strong>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={range === 'loop'}
+              className={`mixer__choice ${range === 'loop' ? 'is-on' : ''}`}
+              disabled={locked || !loopReady}
+              title={loopReady ? 'Split the A/B loop only' : 'Set a loop on the waveform first'}
+              onClick={() => onRange('loop')}
+            >
+              <strong>Loop</strong>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {accuracy != null && (
+        <div
+          className={`mixer__accuracy ${accuracyKind === 'result' ? 'is-result' : ''}`}
+          aria-label={
+            accuracyKind === 'result'
+              ? `Split accuracy ${accuracy} percent`
+              : `Estimated split accuracy ${accuracy} percent`
+          }
+        >
+          <span>{accuracyKind === 'result' ? 'Split accuracy' : 'Est. accuracy'}</span>
+          <strong>{accuracy}%</strong>
+        </div>
       )}
+
+      {settingsDiffer && !splitting && (
+        <p className="mixer__hint">Last split used another setting. Split again to apply this one.</p>
+      )}
+
+      <button
+        type="button"
+        className="btn btn--accent mixer__split"
+        disabled={locked || device == null}
+        onClick={onSplit}
+      >
+        {splitting ? 'Splitting…' : device == null ? 'Pick CPU or GPU' : 'Split stems'}
+      </button>
 
       {splitting && splitProgress && (
         <ProgressCard
@@ -54,12 +201,13 @@ export function StemMixer({
       )}
 
       <ul className={`mixer__list ${ready ? '' : 'is-disabled'}`}>
-        {STEM_IDS.map((id) => {
+        {activeStems.map((id) => {
           const lvl = levels[id]
           return (
             <li key={id} className="mixer__row">
               <div className="mixer__label">
                 <span>{STEM_LABELS[id]}</span>
+                <span className="mixer__vol">{Math.round(lvl.volume * 100)}%</span>
                 <div className="mixer__actions">
                   <button
                     type="button"
@@ -87,7 +235,6 @@ export function StemMixer({
                 disabled={!ready || lvl.muted}
                 onChange={(e) => onChange(id, { volume: Number(e.target.value) / 100 })}
               />
-              <span className="mixer__vol">{Math.round(lvl.volume * 100)}%</span>
             </li>
           )
         })}

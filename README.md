@@ -6,18 +6,15 @@ Upload any audio track — or paste a YouTube link — and practice drums with s
 
 - 6 drum lanes: kick, snare, tom, hi-hat, crash, ride
 - YouTube fetch via local **yt-dlp**
-- **Split stems** (Demucs): drums / bass / vocals / other with volume + mute/solo
-- **GPU-accelerated** stem split when CUDA PyTorch is installed
+- **Split stems**: pick a Demucs model, Fast / Balanced / Best, CPU or GPU, and the full song or the current loop. 6-stem models add guitar and piano.
+- **GPU or CPU** stem split. First launch installs a CUDA build when `nvidia-smi` works.
 - Slow-down, A/B loop, mic scoring, chart editor
 
 ## Run
 
-**Easiest (Windows):** double-click [`start.bat`](start.bat)
+Needs [Node.js](https://nodejs.org/). Python, PyTorch, Demucs, yt-dlp, and ffmpeg are installed into `.venv` on first launch. You do not install those yourself.
 
-That will:
-1. Stop anything already using ports **5173** / **8787**
-2. Install npm deps if needed
-3. Start the web app + YouTube/Demucs API together
+**Windows:** double-click [`start.bat`](start.bat)
 
 Or from a terminal:
 
@@ -25,30 +22,12 @@ Or from a terminal:
 npm start
 ```
 
-Same clean restart behavior.
-
-Needs **yt-dlp**, **ffmpeg**, and for stem split: **Demucs** + **PyTorch**.
-
-### GPU stem split (recommended — RTX etc.)
-
-```bash
-python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-python -m pip install demucs
-```
-
-### CPU-only fallback
-
-```bash
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-python -m pip install demucs
-```
+The first start downloads PyTorch (a few GB when an NVIDIA driver is present) and can take a while. Later starts skip that. If Python 3.10+ is missing on Windows, the script downloads it into `.tools` and does not change your system PATH.
 
 - App → http://localhost:5173
 - Helper → http://127.0.0.1:8787
 
-Optional env: `MAINER_DEMUCS_DEVICE=cuda|cpu`, `MAINER_DEMUCS_SEGMENT=7`
-
-After a track loads, click **Split stems**, then Solo/Mute drums to practice isolated.
+After a track loads, pick a model, quality, CPU or GPU, and full song or the current loop, then **Split stems**. Solo the drum stem to practice.
 
 ## License
 

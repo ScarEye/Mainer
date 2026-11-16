@@ -56,15 +56,17 @@ export function createNoteId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export type StemId = 'drums' | 'bass' | 'vocals' | 'other'
+export type StemId = 'drums' | 'bass' | 'vocals' | 'guitar' | 'piano' | 'other'
 
-export const STEM_IDS: StemId[] = ['drums', 'bass', 'vocals', 'other']
+export const STEM_IDS: StemId[] = ['drums', 'bass', 'vocals', 'guitar', 'piano', 'other']
 
 export const STEM_LABELS: Record<StemId, string> = {
   drums: 'Drums',
   bass: 'Bass',
   vocals: 'Vocals',
-  other: 'Other / Guitar',
+  guitar: 'Guitar',
+  piano: 'Piano',
+  other: 'Other',
 }
 
 export type StemLevels = Record<StemId, { volume: number; muted: boolean }>
@@ -74,6 +76,8 @@ export function defaultStemLevels(): StemLevels {
     drums: { volume: 1, muted: false },
     bass: { volume: 1, muted: false },
     vocals: { volume: 1, muted: false },
+    guitar: { volume: 1, muted: false },
+    piano: { volume: 1, muted: false },
     other: { volume: 1, muted: false },
   }
 }

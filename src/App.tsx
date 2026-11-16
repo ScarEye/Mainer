@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { separateStems } from './api/separate'
+import { fetchSeparateHealth, separateStems } from './api/separate'
 import { fetchYoutubeTrack } from './api/youtube'
 import { analyzeDrumChart } from './audio/analyze'
 import { AudioEngine } from './audio/engine'
 import { MicDetector } from './audio/micDetector'
+import { placeStem, sliceBuffer } from './audio/placeStem'
+import { estimateSplitAccuracy, measureSplitAccuracy } from './audio/separateScore'
 import { encodeWav } from './audio/wav'
 import { ChartEditor } from './components/ChartEditor'
 import { PracticeVisual } from './components/PracticeVisual'
@@ -13,6 +15,8 @@ import { UploadDropzone } from './components/UploadDropzone'
 import { VisualModePicker } from './components/VisualModePicker'
 import { WaveformScrub } from './components/WaveformScrub'
 import { YoutubeImport } from './components/YoutubeImport'
+import { modelById, type DeviceChoice, type QualityId, type SplitRange } from './separate/models'
+import { SEPARATE_MODELS } from './separate/models'
 import type { ChartNote, DrumChart, DrumLane, StemId, StemLevels, VisualMode } from './types/chart'
 import { STEM_IDS, defaultStemLevels } from './types/chart'
 import './App.css'
@@ -31,6 +35,29 @@ type ProgressState = {
 }
 
 const HIT_WINDOW = 0.12
+
+type SplitRun = {
+  model: string
+  quality: QualityId
+  range: SplitRange
+  loopStart: number | null
+  loopEnd: number | null
+  accuracy: number
+  stems: StemId[]
+}
+
+function runMatches(
+  run: SplitRun | null,
+  model: string,
+  quality: QualityId,
+  range: SplitRange,
+  loopStart: number | null,
+  loopEnd: number | null,
+) {
+  if (!run || run.model !== model || run.quality !== quality || run.range !== range) return false
+  if (range === 'loop') return run.loopStart === loopStart && run.loopEnd === loopEnd
+  return true
+}
 
 function formatTime(t: number) {
   const m = Math.floor(t / 60)
@@ -98,10 +125,18 @@ export default function App() {
   const [hitFlash, setHitFlash] = useState<Partial<Record<DrumLane, number>>>({})
   const [score, setScore] = useState<Score>({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
   const [lastJudgement, setLastJudgement] = useState<string | null>(null)
+  const [sourceBuffer, setSourceBuffer] = useState<AudioBuffer | null>(null)
   const [stemLevels, setStemLevels] = useState<StemLevels>(defaultStemLevels())
   const [stemsReady, setStemsReady] = useState(false)
   const [splitting, setSplitting] = useState(false)
   const [splitProgress, setSplitProgress] = useState<ProgressState | null>(null)
+  const [modelId, setModelId] = useState('htdemucs_6s')
+  const [qualityId, setQualityId] = useState<QualityId>('balanced')
+  const [device, setDevice] = useState<DeviceChoice | null>(null)
+  const [splitRange, setSplitRange] = useState<SplitRange>('full')
+  const [cuda, setCuda] = useState(false)
+  const [gpuName, setGpuName] = useState<string | null>(null)
+  const [splitRun, setSplitRun] = useState<SplitRun | null>(null)
   const [visualMode, setVisualMode] = useState<VisualMode>(() => {
     const saved = localStorage.getItem('mainer.visualMode')
     return saved === 'notation' || saved === 'kit' || saved === 'digital' ? saved : 'digital'
@@ -172,6 +207,18 @@ export default function App() {
   }, [clearLoopJudgements])
 
   useEffect(() => {
+    let cancel = false
+    void fetchSeparateHealth().then((health) => {
+      if (cancel) return
+      setCuda(Boolean(health.cuda))
+      setGpuName(health.gpuName ?? null)
+    })
+    return () => {
+      cancel = true
+    }
+  }, [status])
+
+  useEffect(() => {
     if (!chart || !playing) return
     for (const note of chart.notes) {
       if (judgedRef.current.has(note.id)) continue
@@ -234,8 +281,12 @@ export default function App() {
   const resetSessionUi = () => {
     setChart(null)
     setBuffer(null)
+    setSourceBuffer(null)
     setStemsReady(false)
     setStemLevels(defaultStemLevels())
+    setSplitRun(null)
+    setDevice(null)
+    setSplitRange('full')
     setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
     judgedRef.current = new Set()
     setLoopStart(null)
@@ -261,6 +312,7 @@ export default function App() {
       const nextChart = await analyzeDrumChart(decoded, title)
       if (gen !== sessionGenRef.current) return
       await engineRef.current.loadBuffer(decoded)
+      setSourceBuffer(decoded)
       setBuffer(decoded)
       setChart(nextChart)
       setLoadingProgress((prev) => mergeProgress(prev, progress('Loading track', 'Track ready.', 100)))
@@ -309,39 +361,86 @@ export default function App() {
   }
 
   const onSplitStems = async () => {
-    if (!buffer || splitting) return
+    const source = sourceBuffer
+    if (!source || splitting || !device) return
+    const model = modelById(modelId)
+    const loopOk =
+      loopStart != null && loopEnd != null && Math.abs(loopEnd - loopStart) >= 0.25
+    if (splitRange === 'loop' && !loopOk) {
+      setError('Set a loop on the waveform before splitting that range.')
+      return
+    }
+    const useLoop = splitRange === 'loop' && loopOk
+    const start = useLoop ? Math.min(loopStart ?? 0, loopEnd ?? 0) : 0
+    const end = useLoop ? Math.max(loopStart ?? 0, loopEnd ?? 0) : source.duration
     const gen = sessionGenRef.current
     const title = chart?.title
+    const previous = chart
     setSplitting(true)
     setError(null)
     setSplitProgress(progress('Splitting stems', 'Preparing audio…', 8))
     try {
-      const wav = encodeWav(buffer)
-      const raw = await separateStems(wav, (msg) => {
-        if (gen !== sessionGenRef.current) return
-        setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', msg, splitPercent(msg))))
-      })
+      const ctx = await engineRef.current.ensureContext()
+      const piece = useLoop ? sliceBuffer(ctx, source, start, end) : source
+      const wav = encodeWav(piece)
+      const raw = await separateStems(
+        wav,
+        { model: model.id, quality: qualityId, device, stems: model.stems },
+        (msg) => {
+          if (gen !== sessionGenRef.current) return
+          setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', msg, splitPercent(msg))))
+        },
+      )
       if (gen !== sessionGenRef.current) return
       setSplitProgress((prev) => mergeProgress(prev, progress('Splitting stems', 'Decoding stems…', 92)))
-      const ctx = await engineRef.current.ensureContext()
-      const decoded = {} as Record<StemId, AudioBuffer>
-      for (const id of STEM_IDS) {
-        decoded[id] = await ctx.decodeAudioData(raw[id].slice(0))
+      const decoded = {} as Partial<Record<StemId, AudioBuffer>>
+      for (const id of model.stems) {
+        const bytes = raw[id]
+        if (!bytes) throw new Error(`Missing stem: ${id}`)
+        decoded[id] = await ctx.decodeAudioData(bytes.slice(0))
+      }
+      const drumSlice = decoded.drums
+      if (!drumSlice) throw new Error('Missing drum stem.')
+      const placed = {} as Partial<Record<StemId, AudioBuffer>>
+      for (const id of model.stems) {
+        const stem = decoded[id]
+        if (!stem) continue
+        placed[id] = placeStem(ctx, stem, source.length, source.sampleRate, start)
       }
       if (gen !== sessionGenRef.current) return
-      await engineRef.current.loadStems(decoded)
-      setBuffer(decoded.drums)
+      const measured = measureSplitAccuracy(source, decoded, useLoop ? { start, end } : null)
+      await engineRef.current.loadStems(placed)
+      setBuffer(placed.drums ?? source)
       setStemsReady(true)
-      setStemLevels(engineRef.current.getStemLevels())
+      setSplitRun({
+        model: model.id,
+        quality: qualityId,
+        range: useLoop ? 'loop' : 'full',
+        loopStart: useLoop ? start : null,
+        loopEnd: useLoop ? end : null,
+        accuracy: measured,
+        stems: model.stems,
+      })
 
       if (title) {
         setSplitProgress((prev) =>
           mergeProgress(prev, progress('Splitting stems', 'Rebuilding drum chart from the drum stem…', 96)),
         )
-        const drumChart = await analyzeDrumChart(decoded.drums, title)
+        const drumChart = await analyzeDrumChart(drumSlice, title)
         if (gen !== sessionGenRef.current) return
-        setChart(drumChart)
-        seedJudgedBefore(drumChart.notes, engineRef.current.currentTime)
+        const nextChart =
+          useLoop && previous
+            ? {
+                ...previous,
+                bpm: drumChart.bpm || previous.bpm,
+                notes: [
+                  ...previous.notes.filter((note) => note.t < start - 0.03 || note.t > end + 0.03),
+                  ...drumChart.notes.map((note) => ({ ...note, t: note.t + start })),
+                ].sort((a, b) => a.t - b.t || a.lane.localeCompare(b.lane)),
+              }
+            : drumChart
+        setChart(nextChart)
+        seedJudgedBefore(nextChart.notes, engineRef.current.currentTime)
         setScore({ hits: 0, misses: 0, combo: 0, bestCombo: 0 })
         setLastJudgement(null)
       }
@@ -370,10 +469,27 @@ export default function App() {
     setStemLevels(engineRef.current.getStemLevels())
   }
 
+  const activeStems = stemsReady && splitRun ? splitRun.stems : modelById(modelId).stems
+  const matched = runMatches(splitRun, modelId, qualityId, splitRange, loopStart, loopEnd)
+  const estimate = useMemo(() => {
+    if (!sourceBuffer) return null
+    if (splitRange === 'loop') {
+      if (loopStart == null || loopEnd == null || Math.abs(loopEnd - loopStart) < 0.25) return null
+      return estimateSplitAccuracy(sourceBuffer, modelById(modelId), qualityId, {
+        start: Math.min(loopStart, loopEnd),
+        end: Math.max(loopStart, loopEnd),
+      })
+    }
+    return estimateSplitAccuracy(sourceBuffer, modelById(modelId), qualityId, null)
+  }, [sourceBuffer, modelId, qualityId, splitRange, loopStart, loopEnd])
+
   const onSolo = (id: StemId) => {
     const next = defaultStemLevels()
     for (const stem of STEM_IDS) {
-      next[stem] = { volume: stemLevels[stem].volume, muted: stem !== id }
+      next[stem] = {
+        volume: stemLevels[stem].volume,
+        muted: !activeStems.includes(stem) || stem !== id,
+      }
     }
     engineRef.current.setAllStemLevels(next)
     setStemLevels(next)
@@ -534,7 +650,8 @@ export default function App() {
               {visualMode === 'digital' && 'Digital: notes fall down lanes to the HIT line.'}
               {visualMode === 'notation' && 'Notation: drum staff — notes approach the NOW playhead from the right.'}
               {visualMode === 'kit' && 'Kit: watch which drum lights up, then hit that piece.'}
-            </p>            <WaveformScrub
+            </p>
+            <WaveformScrub
               buffer={buffer}
               currentTime={currentTime}
               duration={duration}
@@ -589,9 +706,25 @@ export default function App() {
           <aside className="studio__side">
             <StemMixer
               levels={stemLevels}
+              activeStems={activeStems}
               ready={stemsReady}
               splitting={splitting}
               splitProgress={splitProgress}
+              models={SEPARATE_MODELS}
+              modelId={modelId}
+              quality={qualityId}
+              device={device}
+              cuda={cuda}
+              gpuName={gpuName}
+              range={splitRange}
+              loopReady={loopStart != null && loopEnd != null && Math.abs(loopEnd - loopStart) >= 0.25}
+              accuracy={matched && splitRun ? splitRun.accuracy : estimate}
+              accuracyKind={matched ? 'result' : 'estimate'}
+              settingsDiffer={Boolean(stemsReady && splitRun && !matched)}
+              onModel={setModelId}
+              onQuality={setQualityId}
+              onDevice={setDevice}
+              onRange={setSplitRange}
               onChange={onStemChange}
               onSolo={onSolo}
               onSplit={() => void onSplitStems()}

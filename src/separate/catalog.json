@@ -1,0 +1,37 @@
+{
+  "qualities": [
+    { "id": "fast", "label": "Fast", "time": "1×", "shifts": 0, "overlap": 0.25, "bump": 0 },
+    { "id": "balanced", "label": "Balanced", "time": "2×", "shifts": 1, "overlap": 0.25, "bump": 2 },
+    { "id": "best", "label": "Best", "time": "4×", "shifts": 2, "overlap": 0.5, "bump": 4 }
+  ],
+  "models": [
+    {
+      "id": "htdemucs_6s",
+      "label": "HT Demucs 6-stem",
+      "detail": "Drums, bass, vocals, guitar, piano, and other. Piano is the weak stem.",
+      "stems": ["drums", "bass", "vocals", "guitar", "piano", "other"],
+      "sdr": { "drums": 10.04, "bass": 8.52, "vocals": 8.53, "guitar": 6.5, "piano": 4.2, "other": 5.2 }
+    },
+    {
+      "id": "htdemucs",
+      "label": "HT Demucs",
+      "detail": "Four stems. Guitar and piano stay inside Other.",
+      "stems": ["drums", "bass", "vocals", "other"],
+      "sdr": { "drums": 10.52, "bass": 9.56, "vocals": 8.86, "other": 4.56 }
+    },
+    {
+      "id": "htdemucs_ft",
+      "label": "HT Demucs Fine-tune",
+      "detail": "Best drums and vocals here. About 4× slower than HT Demucs before the quality setting.",
+      "stems": ["drums", "bass", "vocals", "other"],
+      "sdr": { "drums": 10.82, "bass": 9.4, "vocals": 8.8, "other": 3.9 }
+    },
+    {
+      "id": "mdx_extra",
+      "label": "MDX Extra",
+      "detail": "Older network. Try it when HT Demucs sends an instrument to the wrong stem.",
+      "stems": ["drums", "bass", "vocals", "other"],
+      "sdr": { "drums": 9.1, "bass": 8.6, "vocals": 8.7, "other": 5.4 }
+    }
+  ]
+}

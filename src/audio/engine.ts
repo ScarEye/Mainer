@@ -42,7 +42,7 @@ export class AudioEngine {
   }
 
   get hasStems() {
-    return Boolean(this.stemBuffers && STEM_IDS.every((id) => this.stemBuffers?.[id]))
+    return Boolean(this.stemBuffers?.drums)
   }
 
   async loadBuffer(buffer: AudioBuffer): Promise<void> {
@@ -54,7 +54,7 @@ export class AudioEngine {
     this.emit()
   }
 
-  async loadStems(stems: Record<StemId, AudioBuffer>): Promise<void> {
+  async loadStems(stems: Partial<Record<StemId, AudioBuffer>>): Promise<void> {
     const wasPlaying = this.playing
     const t = this.currentTime
     await this.stopSourceOnly()

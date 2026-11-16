@@ -1,21 +1,25 @@
 import http from 'node:http'
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { ffmpegExe, pythonPath, run } from './runtime.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const catalog = JSON.parse(readFileSync(path.join(__dirname, '../src/separate/catalog.json'), 'utf8'))
 
 const PORT = Number(process.env.MAINER_API_PORT || 8787)
-const STEM_NAMES = ['drums', 'bass', 'vocals', 'other']
+const ALL_STEMS = ['drums', 'bass', 'vocals', 'guitar', 'piano', 'other']
 
 /** @type {Map<string, {
  *   created: number,
  *   status: 'queued' | 'running' | 'done' | 'error',
  *   message: string,
  *   error?: string,
+ *   stemNames?: string[],
  *   stems?: Record<string, Buffer>
  * }>} */
 const stemJobs = new Map()
@@ -36,50 +40,29 @@ function cors(res, extra = {}) {
   }
 }
 
-function run(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
-      windowsHide: true,
-      ...opts,
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout?.on('data', (d) => {
-      stdout += d.toString()
-    })
-    child.stderr?.on('data', (d) => {
-      stderr += d.toString()
-    })
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code === 0) resolve({ stdout, stderr })
-      else reject(new Error(stderr.trim() || stdout.trim() || `${cmd} exited with ${code}`))
-    })
-  })
+async function resolveYtDlp() {
+  const py = pythonPath()
+  try {
+    await run(py, ['-m', 'yt_dlp', '--version'])
+    return [py, '-m', 'yt_dlp']
+  } catch {
+    /* system yt-dlp, if the local env is not ready yet */
+  }
+  await run('yt-dlp', ['--version'], process.platform === 'win32' ? { shell: true } : {})
+  return ['yt-dlp']
 }
 
-async function resolveYtDlp() {
-  // Prefer python -m on Windows (pip installs yt-dlp.cmd which spawn can't run without shell)
-  if (process.platform === 'win32') {
-    try {
-      await run('python', ['-m', 'yt_dlp', '--version'])
-      return ['python', '-m', 'yt_dlp']
-    } catch {
-      /* fall through */
-    }
-  }
-  try {
-    await run('yt-dlp', ['--version'], process.platform === 'win32' ? { shell: true } : {})
-    return process.platform === 'win32' ? ['yt-dlp'] : ['yt-dlp']
-  } catch {
-    await run('python', ['-m', 'yt_dlp', '--version'])
-    return ['python', '-m', 'yt_dlp']
-  }
+function modelById(id) {
+  return catalog.models.find((model) => model.id === id) || null
+}
+
+function qualityById(id) {
+  return catalog.qualities.find((quality) => quality.id === id) || null
 }
 
 async function demucsAvailable() {
   try {
-    await run('python', ['-c', 'import demucs; print("ok")'])
+    await run(pythonPath(), ['-c', 'import demucs; print("ok")'])
     return true
   } catch {
     return false
@@ -121,11 +104,14 @@ async function fetchYoutubeAudio(rawUrl) {
   if (!url) throw new Error('Only YouTube URLs are supported.')
 
   const yt = await resolveYtDlp()
+  const ffmpeg = await ffmpegExe()
+  const ffArgs = ffmpeg ? ['--ffmpeg-location', ffmpeg] : []
   const dir = await mkdtemp(path.join(tmpdir(), 'mainer-yt-'))
 
   try {
     const metaArgs = [
       ...yt.slice(1),
+      ...ffArgs,
       '--no-update',
       '--no-playlist',
       '--dump-single-json',
@@ -140,6 +126,7 @@ async function fetchYoutubeAudio(rawUrl) {
     const outTemplate = path.join(dir, '%(id)s.%(ext)s')
     const dlArgs = [
       ...yt.slice(1),
+      ...ffArgs,
       '--no-update',
       '--no-playlist',
       '-f',
@@ -196,7 +183,7 @@ async function findStemFiles(rootDir) {
         continue
       }
       const base = entry.name.toLowerCase()
-      for (const name of STEM_NAMES) {
+      for (const name of ALL_STEMS) {
         if (base === `${name}.wav` || base === `${name}.mp3`) found[name] = full
       }
     }
@@ -205,54 +192,48 @@ async function findStemFiles(rootDir) {
   return found
 }
 
-/** @type {null | { device: string, cuda: boolean, gpuName?: string, vramMb: number, segment: number, overlap: number, shifts: number }} */
+/** @type {null | { cuda: boolean, gpuName: string | null, vramMb: number }} */
 let demucsConfigCache = null
 
 async function getDemucsConfig() {
   if (demucsConfigCache) return demucsConfigCache
   try {
-    const { stdout } = await run('python', [path.join(__dirname, 'demucs_device.py')])
+    const { stdout } = await run(pythonPath(), [path.join(__dirname, 'demucs_device.py')])
     demucsConfigCache = JSON.parse(stdout.trim())
     return demucsConfigCache
   } catch {
-    demucsConfigCache = {
-      device: 'cpu',
-      cuda: false,
-      vramMb: 0,
-      segment: 7,
-      overlap: 0.1,
-      shifts: 0,
-    }
+    demucsConfigCache = { cuda: false, gpuName: null, vramMb: 0 }
     return demucsConfigCache
   }
 }
 
-function runDemucs(inputPath, outDir, config, onLog) {
+function runDemucs(inputPath, outDir, options, onLog) {
+  const segment = options.device === 'cuda' && options.vramMb > 0 && options.vramMb < 5000 ? 6 : 7
   const args = [
-    '-m',
-    'demucs',
+    path.join(__dirname, 'run_demucs.py'),
     '-n',
-    'htdemucs',
+    options.model.id,
     '-d',
-    config.device,
+    options.device,
     '--shifts',
-    String(config.shifts),
+    String(options.quality.shifts),
     '--overlap',
-    String(config.overlap),
+    String(options.quality.overlap),
     '--segment',
-    String(Math.floor(Number(config.segment) || 7)),
+    String(segment),
     '--out',
     outDir,
     inputPath,
   ]
 
   return new Promise((resolve, reject) => {
-    const child = spawn('python', args, {
+    const child = spawn(pythonPath(), args, {
       windowsHide: true,
       env: {
         ...process.env,
         PYTHONUNBUFFERED: '1',
         CUDA_VISIBLE_DEVICES: process.env.CUDA_VISIBLE_DEVICES ?? '0',
+        HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
       },
     })
 
@@ -279,13 +260,14 @@ function runDemucs(inputPath, outDir, config, onLog) {
 /**
  * Start separation in the background and return a job id immediately.
  */
-function startSeparateJob(wavBuffer) {
+function startSeparateJob(wavBuffer, options) {
   const jobId = randomUUID()
-  /** @type {{ created: number, status: string, message: string, error?: string, stems?: Record<string, Buffer> }} */
+  /** @type {{ created: number, status: string, message: string, error?: string, stemNames?: string[], stems?: Record<string, Buffer> }} */
   const job = {
     created: Date.now(),
     status: 'queued',
     message: 'Queued for stem separation…',
+    stemNames: options.model.stems,
   }
   stemJobs.set(jobId, job)
 
@@ -295,24 +277,24 @@ function startSeparateJob(wavBuffer) {
     const outDir = path.join(dir, 'out')
     try {
       if (!(await demucsAvailable())) {
-        throw new Error(
-          'Demucs is not installed. Run: pip install demucs torch (CUDA torch for GPU).',
-        )
+        throw new Error('Stem tools are not ready yet. Start Mainer once with start.bat and wait for setup to finish.')
       }
 
       const config = await getDemucsConfig()
-      const deviceLabel = config.cuda
-        ? `GPU (${config.gpuName || 'CUDA'})`
-        : 'CPU'
+      if (options.device === 'cuda' && !config.cuda) {
+        throw new Error('GPU was selected, but this PyTorch install cannot see an NVIDIA GPU.')
+      }
 
+      const deviceLabel = options.device === 'cuda' ? `GPU (${config.gpuName || 'CUDA'})` : 'CPU'
       job.status = 'running'
-      job.message = 'Saving audio for Demucs…'
+      job.message = 'Saving audio…'
       await writeFile(inputPath, wavBuffer)
 
-      job.message = `Running Demucs on ${deviceLabel}…`
-      console.log(`[demucs ${jobId.slice(0, 8)}] device=${config.device} segment=${config.segment}`)
-      await runDemucs(inputPath, outDir, config, (line) => {
-        // Keep messages short for the UI
+      job.message = `Running ${options.model.label} · ${options.quality.label} on ${deviceLabel}…`
+      console.log(
+        `[demucs ${jobId.slice(0, 8)}] model=${options.model.id} device=${options.device} shifts=${options.quality.shifts}`,
+      )
+      await runDemucs(inputPath, outDir, { ...options, vramMb: config.vramMb }, (line) => {
         const clipped = line.length > 140 ? `${line.slice(0, 140)}…` : line
         job.message = clipped
         console.log(`[demucs ${jobId.slice(0, 8)}] ${line}`)
@@ -322,9 +304,9 @@ function startSeparateJob(wavBuffer) {
       const files = await findStemFiles(outDir)
       /** @type {Record<string, Buffer>} */
       const stems = {}
-      for (const name of STEM_NAMES) {
+      for (const name of options.model.stems) {
         const fp = files[name]
-        if (!fp) throw new Error(`Demucs did not produce ${name}.wav`)
+        if (!fp) throw new Error(`Separation did not produce ${name}.wav`)
         stems[name] = await readFile(fp)
       }
 
@@ -377,8 +359,8 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         ytDlp: yt.join(' '),
         demucs,
-        demucsDevice: demucsConfig?.device,
-        gpuName: demucsConfig?.gpuName,
+        cuda: Boolean(demucsConfig?.cuda),
+        gpuName: demucsConfig?.gpuName ?? null,
       })
     } catch (e) {
       sendJson(res, 500, {
@@ -395,10 +377,21 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, demucs ? 200 : 503, {
       ok: demucs,
       demucs,
-      device: config?.device,
-      gpuName: config?.gpuName,
-      vramMb: config?.vramMb,
-      error: demucs ? undefined : 'Demucs not installed yet',
+      cuda: Boolean(config?.cuda),
+      gpuName: config?.gpuName ?? null,
+      vramMb: config?.vramMb ?? 0,
+      models: catalog.models.map((model) => ({
+        id: model.id,
+        label: model.label,
+        detail: model.detail,
+        stems: model.stems,
+      })),
+      qualities: catalog.qualities.map((quality) => ({
+        id: quality.id,
+        label: quality.label,
+        time: quality.time,
+      })),
+      error: demucs ? undefined : 'Stem tools are not ready yet. Leave Mainer running through first-time setup.',
     })
     return
   }
@@ -449,12 +442,25 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { error: 'Empty audio body.' })
         return
       }
-      console.log(`Starting stem job (${(wav.length / 1024 / 1024).toFixed(1)} MB)…`)
-      const jobId = startSeparateJob(wav)
+      const model = modelById(url.searchParams.get('model') || '')
+      const quality = qualityById(url.searchParams.get('quality') || '')
+      const device = url.searchParams.get('device')
+      if (!model || !quality) {
+        sendJson(res, 400, { error: 'Pick a model and a quality level.' })
+        return
+      }
+      if (device !== 'cpu' && device !== 'cuda') {
+        sendJson(res, 400, { error: 'Pick CPU or GPU before splitting.' })
+        return
+      }
+      console.log(
+        `Starting stem job ${model.id}/${quality.id}/${device} (${(wav.length / 1024 / 1024).toFixed(1)} MB)…`,
+      )
+      const jobId = startSeparateJob(wav, { model, quality, device })
       sendJson(res, 202, {
         jobId,
-        stems: STEM_NAMES,
-        message: 'Separation started. Poll /api/separate/:jobId for status.',
+        stems: model.stems,
+        message: 'Separation started.',
       })
     } catch (e) {
       console.error(e)
@@ -477,7 +483,7 @@ const server = http.createServer(async (req, res) => {
       status: job.status,
       message: job.message,
       error: job.error,
-      stems: job.status === 'done' ? STEM_NAMES : undefined,
+      stems: job.status === 'done' ? job.stemNames : undefined,
     })
     return
   }
@@ -487,7 +493,7 @@ const server = http.createServer(async (req, res) => {
     const jobId = stemMatch[1]
     const name = stemMatch[2]
     const job = stemJobs.get(jobId)
-    if (!job || job.status !== 'done' || !STEM_NAMES.includes(name) || !job.stems?.[name]) {
+    if (!job || job.status !== 'done' || !job.stemNames?.includes(name) || !job.stems?.[name]) {
       sendJson(res, 404, { error: 'Stem not found (still processing, expired, or invalid).' })
       return
     }

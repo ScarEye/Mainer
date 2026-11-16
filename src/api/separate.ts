@@ -1,32 +1,45 @@
 import type { StemId } from '../types/chart'
-import { STEM_IDS } from '../types/chart'
+import type { DeviceChoice, QualityId } from '../separate/models'
 
-export type SeparatedStems = Record<StemId, ArrayBuffer>
+export type SeparatedStems = Partial<Record<StemId, ArrayBuffer>>
+
+export type SeparateHealth = {
+  ok: boolean
+  demucs?: boolean
+  cuda?: boolean
+  gpuName?: string | null
+  error?: string
+}
 
 export type SeparateStatus = {
   jobId: string
   status: 'queued' | 'running' | 'done' | 'error'
   message: string
   error?: string
+  stems?: StemId[]
+}
+
+export type SeparateOptions = {
+  model: string
+  quality: QualityId
+  device: DeviceChoice
+  stems: StemId[]
 }
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-export async function checkSeparateReady(): Promise<{ ok: boolean; demucs?: boolean; error?: string }> {
+export async function fetchSeparateHealth(): Promise<SeparateHealth> {
   try {
     const res = await fetch('/api/separate/health')
-    return (await res.json()) as { ok: boolean; demucs?: boolean; error?: string }
+    return (await res.json()) as SeparateHealth
   } catch {
-    return { ok: false, error: 'Helper offline' }
+    return { ok: false, cuda: false, error: 'Helper offline' }
   }
 }
 
-async function pollJob(
-  jobId: string,
-  onProgress?: (message: string) => void,
-): Promise<void> {
+async function pollJob(jobId: string, onProgress?: (message: string) => void): Promise<void> {
   while (true) {
     const res = await fetch(`/api/separate/${jobId}`)
     if (!res.ok) {
@@ -35,7 +48,7 @@ async function pollJob(
         const data = (await res.json()) as { error?: string }
         if (data.error) message = data.error
       } catch {
-        /* ignore */
+        /* ignore malformed body */
       }
       throw new Error(message)
     }
@@ -54,39 +67,45 @@ async function pollJob(
 
 export async function separateStems(
   wav: ArrayBuffer,
+  options: SeparateOptions,
   onProgress?: (message: string) => void,
 ): Promise<SeparatedStems> {
-  onProgress?.('Uploading audio to local helper…')
-  const res = await fetch('/api/separate', {
+  onProgress?.('Uploading audio…')
+  const params = new URLSearchParams({
+    model: options.model,
+    quality: options.quality,
+    device: options.device,
+  })
+  const res = await fetch(`/api/separate?${params}`, {
     method: 'POST',
     headers: { 'Content-Type': 'audio/wav' },
     body: wav,
   })
 
   if (!res.ok && res.status !== 202) {
-    let message = `YouTube fetch failed (${res.status})`.replace('YouTube fetch', 'Stem split')
+    let message = `Stem split failed (${res.status})`
     try {
       const data = (await res.json()) as { error?: string }
       if (data.error) message = data.error
     } catch {
-      /* ignore */
+      /* ignore malformed body */
     }
     throw new Error(message)
   }
 
   const payload = (await res.json()) as { jobId: string; message?: string }
-  if (!payload.jobId) throw new Error('Helper did not return a job id. Restart npm run dev.')
+  if (!payload.jobId) throw new Error('Helper did not return a job id. Restart Mainer.')
 
   onProgress?.(payload.message || 'Separation started…')
   await pollJob(payload.jobId, onProgress)
 
   onProgress?.('Downloading stem files…')
-  const out = {} as SeparatedStems
+  const out: SeparatedStems = {}
   await Promise.all(
-    STEM_IDS.map(async (id) => {
-      const r = await fetch(`/api/stems/${payload.jobId}/${id}`)
-      if (!r.ok) throw new Error(`Missing stem: ${id}`)
-      out[id] = await r.arrayBuffer()
+    options.stems.map(async (id) => {
+      const stemRes = await fetch(`/api/stems/${payload.jobId}/${id}`)
+      if (!stemRes.ok) throw new Error(`Missing stem: ${id}`)
+      out[id] = await stemRes.arrayBuffer()
     }),
   )
   onProgress?.('Stems ready')
